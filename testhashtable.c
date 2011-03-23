@@ -1,8 +1,17 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "smphashtable.h"
+
+void assert_hash_value(struct hash_value *value, long val)
+{
+  long tmp;
+  assert(value->size == 8);
+  memcpy(&tmp, value->data, 8);
+  assert(tmp == val);
+}
 
 void test1() 
 {
@@ -28,26 +37,22 @@ void test1()
   printf("Looking up Elements...\n");
   struct hash_value *value;
   value = smp_hash_lookup(table, c, 123);
-  assert(value->size == 8);
-  assert(*(long *)(value->data) == 1);
+  assert_hash_value(value, 1);
   release_hash_value(value);
 
   value = smp_hash_lookup(table, c, 1234);
-  assert(value->size == 8);
-  assert(*(long *)(value->data) == 2);
+  assert_hash_value(value, 2);
   release_hash_value(value);
 
   value = smp_hash_lookup(table, c, 12345);
-  assert(value->size == 8);
-  assert(*(long *)(value->data) == 3);
+  assert_hash_value(value, 3);
   release_hash_value(value);
 
   value = smp_hash_lookup(table, c, 122);
   assert(value == NULL);
 
   value = smp_hash_lookup(table, c, 123);
-  assert(value->size == 8);
-  assert(*(long *)(value->data) == 1);
+  assert_hash_value(value, 1);
   assert(value->ref_count == 2);
 
   printf("Stopping Servers...\n");
@@ -83,8 +88,7 @@ void test2()
   struct hash_value *value;
   for (long i = 0; i < max_count; i++) {
     value = smp_hash_lookup(table, c, i << 1);
-    assert(value->size == 8);
-    assert(*(long *)(value->data) == i);
+    assert_hash_value(value, i);
     release_hash_value(value);
   }
 
@@ -127,24 +131,20 @@ void test3()
   // make sure hash insert is completed
   struct hash_value *value;
   value = smp_hash_lookup(table, c1, 123);
-  assert(value->size == 8);
-  assert(*(long *)(value->data) == 0xDEADBEEF);
+  assert_hash_value(value, 0xDEADBEEF);
   release_hash_value(value);
 
   value = smp_hash_lookup(table, c1, 1234);
-  assert(value->size == 8);
-  assert(*(long *)(value->data) == 0xFACEDEAD);
+  assert_hash_value(value, 0xFACEDEAD);
   release_hash_value(value);
 
   printf("Looking up Elements using Client 2...\n");
   value = smp_hash_lookup(table, c2, 123);
-  assert(value->size == 8);
-  assert(*(long *)(value->data) == 0xDEADBEEF);
+  assert_hash_value(value, 0xDEADBEEF);
   release_hash_value(value);
 
   value = smp_hash_lookup(table, c2, 1234);
-  assert(value->size == 8);
-  assert(*(long *)(value->data) == 0xFACEDEAD);
+  assert_hash_value(value, 0xFACEDEAD);
   release_hash_value(value);
   
   printf("Rewriting Element using Client 2...\n");
@@ -153,14 +153,12 @@ void test3()
 
   // make sure hash insert is completed
   value = smp_hash_lookup(table, c2, 123);
-  assert(value->size == 8);
-  assert(*(long *)(value->data) == 0xACEACEACE);
+  assert_hash_value(value, 0xACEACEACE);
   release_hash_value(value);
 
   printf("Looking up Element using Client 1...\n");
   value = smp_hash_lookup(table, c2, 123);
-  assert(value->size == 8);
-  assert(*(long *)(value->data) == 0xACEACEACE);
+  assert_hash_value(value, 0xACEACEACE);
   release_hash_value(value);
 
   printf("Stopping Servers...\n");
