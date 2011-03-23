@@ -7,8 +7,9 @@ all: testhashtable
 testhashtable: testhashtable.o $(lib_objects)
 	gcc -o testhashtable testhashtable.o  $(lib_objects) -lpthread # -pg -lprofiler
 
-smphashtable.o: smphashtable.c smphashtable.h onewaybuffer.o
+smphashtable.o: smphashtable.c smphashtable.h
 onewaybuffer.o: onewaybuffer.c onewaybuffer.h
+testhashtable.o: testhashtable.c
 
 .PHONY: clean
 clean: 

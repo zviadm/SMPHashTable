@@ -60,4 +60,31 @@ void stop_hash_table_servers(struct hash_table *hash_table);
  */
 int create_hash_table_client(struct hash_table *hash_table);
 
+/**
+ * smp_hash_lookup: Lookup key/value pair in hash table
+ * @hash_table: pointer to the hash table structure
+ * @client_id: client id to use to communicate with hash table servers
+ * @key: hash key to lookup value for
+ * @return: pointer to hash_value structure holding value, or NULL if there
+ * was no entry in hash table with given key
+ *
+ * after done using value, release_hash_value must be called to release
+ * hash_value object
+ */ 
+struct hash_value * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key);
+
+/**
+ * smp_hash_insert: Insert key/value pair in hash table
+ * @hash_table: pointer to the hash table structure
+ * @client_id: client id to use to communicate with hash table servers
+ * @key: hash key
+ * @size: size of data
+ * @data: pointer to data
+ */
+void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, size_t size, char *data);
+
+struct hash_value * alloc_hash_value(size_t size, char *data);
+void retain_hash_value(struct hash_value *value);
+void release_hash_value(struct hash_value *value);
+
 #endif

@@ -7,6 +7,7 @@
 #include <sys/queue.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <xmmintrin.h>
 
 #include "onewaybuffer.h"
 #include "smphashtable.h"
@@ -73,8 +74,8 @@ struct hash_table {
   pthread_t *threads;
   struct thread_args *thread_data;
 
-  struct partition *partitions __attribute__ ((aligned (CACHELINE)));
-  struct box_array boxes[MAX_CLIENTS] __attribute__ ((aligned (CACHELINE)));
+  struct partition *partitions;
+  struct box_array *boxes;
 };
 
 // Forward declaration of functions
@@ -82,11 +83,13 @@ void init_hash_table(struct hash_table *hash_table);
 void init_hash_partition(struct hash_table *hash_table, struct partition *p);
 void *hash_table_server(void* args);
 void set_affinity(int cpu_id);
+
 struct elem * hash_lookup(struct partition *p, hash_key key);
 struct elem * hash_insert(struct partition *p, hash_key key, struct hash_value* value);
 void hash_remove(struct partition *p, struct elem *e);
 void lru(struct partition *p, struct elem *e);
-void release_hash_value(struct hash_value *value);
+inline int hash_get_bucket(struct partition *p, hash_key key);
+inline int hash_get_server(struct hash_table *hash_table, hash_key key);
 
 struct hash_table *create_hash_table(size_t max_size, int nservers) 
 {
@@ -112,6 +115,8 @@ void init_hash_table(struct hash_table *hash_table)
   for (int i = 0; i < hash_table->nservers; i++) {
     init_hash_partition(hash_table, &hash_table->partitions[i]);
   }
+
+  hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
 
   assert((unsigned long) &hash_table->partitions[0] % CACHELINE == 0);
   assert((unsigned long) &hash_table->partitions[1] % CACHELINE == 0);
@@ -183,7 +188,6 @@ void stop_hash_table_servers(struct hash_table *hash_table)
 int create_hash_table_client(struct hash_table *hash_table)
 {
   int client = hash_table->nclients;
-  hash_table->nclients++;
   assert(hash_table->nclients <= MAX_CLIENTS);
 
   hash_table->boxes[client].boxes = memalign(CACHELINE, hash_table->nservers * sizeof(struct box));
@@ -194,6 +198,8 @@ int create_hash_table_client(struct hash_table *hash_table)
   assert((unsigned long) &hash_table->boxes[client] % CACHELINE == 0);
   assert((unsigned long) &hash_table->boxes[client].boxes[0] % CACHELINE == 0);
   assert((unsigned long) &hash_table->boxes[client].boxes[1] % CACHELINE == 0);
+
+  __sync_add_and_fetch(&hash_table->nclients, 1);
   return client;
 }
 
@@ -215,25 +221,30 @@ void *hash_table_server(void* args)
     int nclients = hash_table->nclients;
     for (int i = 0; i < nclients; i++) {
       int count = buffer_read_all(&boxes[i].boxes[s].in, SERVER_READ_COUNT, localbuf);
-      if (count > 0) {
-        int k = 0;
-        int j = 0;
-        while (k < count) {
-          if (localbuf[k] & HASH_INSERT_MASK) {
-            assert((k + 1) < count);
-            hash_insert(p, localbuf[k] & (HASH_INSERT_MASK - 1), (struct hash_value *)localbuf[k + 1]);
-            k += 2;
-          } else {
-            struct elem *e = hash_lookup(p, localbuf[k]);
-            localbuf[j] = (unsigned long)e->value;
-            j++;
-            k++;
-          }
-        }
+      if (count == 0) continue;
 
-        if (j > 0) {
-          buffer_write_all(&boxes[i].boxes[s].out, j, localbuf);
+      int k = 0;
+      int j = 0;
+      while (k < count) {
+        if (localbuf[k] & HASH_INSERT_MASK) {
+          assert((k + 1) < count);
+          hash_insert(p, localbuf[k] & (HASH_INSERT_MASK - 1), (struct hash_value *)localbuf[k + 1]);
+          k += 2;
+        } else {
+          struct elem *e = hash_lookup(p, localbuf[k]);
+          if (e != NULL) {
+            localbuf[j] = (unsigned long)e->value;
+            retain_hash_value(e->value);
+          } else {
+            localbuf[j] = 0;
+          }
+          j++;
+          k++;
         }
+      }
+
+      if (j > 0) {
+        buffer_write_all(&boxes[i].boxes[s].out, j, localbuf);
       }
     }
   }
@@ -253,6 +264,28 @@ void set_affinity(int cpu_id)
    fprintf(stderr, "couldn't set affinity for cpu_id:%d\n", cpu_id);
    exit(1);
  }
+}
+
+struct hash_value * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key)
+{
+  unsigned long res;
+  int s = hash_get_server(hash_table, key);
+  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 1, (unsigned long*)&key);
+
+  while (buffer_read_all(&hash_table->boxes[client_id].boxes[s].out, 1, &res) == 0) {
+    _mm_pause();
+  }
+  return (struct hash_value *)res;
+}
+
+void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, size_t size, char *data)
+{
+  unsigned long msg_data[2];
+  msg_data[0] = (unsigned long)key | HASH_INSERT_MASK;
+  msg_data[1] = (unsigned long)alloc_hash_value(size, data);
+
+  int s = hash_get_server(hash_table, key);
+  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 2, msg_data);
 }
 
 /*
@@ -354,7 +387,11 @@ void (void *xa)
 /**
  * Hash Storage Operations
  */
-inline int hash_get_bucket(struct partition *p, hash_key key);
+int hash_get_server(struct hash_table *hash_table, hash_key key)
+{
+  return key % hash_table->nservers;
+}
+
 int hash_get_bucket(struct partition *p, hash_key key)
 {
   return key % p->nhash;
@@ -417,6 +454,20 @@ void lru(struct partition *p, struct elem *e)
   assert(e);
   TAILQ_REMOVE(&p->lru, e, lru);
   TAILQ_INSERT_HEAD(&p->lru, e, lru);
+}
+
+struct hash_value * alloc_hash_value(size_t size, char *data)
+{
+  struct hash_value *value = (struct hash_value *)malloc(size + sizeof(struct hash_value));
+  value->ref_count = 1;
+  value->size = size;
+  memcpy(value->data, data, size);
+  return value;
+}
+
+void retain_hash_value(struct hash_value *value)
+{
+  __sync_add_and_fetch(&value->ref_count, 1);
 }
 
 void release_hash_value(struct hash_value *value)
