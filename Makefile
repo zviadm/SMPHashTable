@@ -1,8 +1,12 @@
-CFLAGS := -std=c99 -Wall -g -msse2 -D_GNU_SOURCE
-
+DFLAGS = 
+CFLAGS = -std=c99 -Wall -msse2 -D_GNU_SOURCE -g -O2 $(DFLAGS)
+					 
 lib_objects = onewaybuffer.o smphashtable.o
 
 all: testhashtable
+
+nodebug:
+	make clean; make DFLAGS=-DNDEBUG
 
 testhashtable: testhashtable.o $(lib_objects)
 	gcc -o testhashtable testhashtable.o  $(lib_objects) -lpthread # -pg -lprofiler
