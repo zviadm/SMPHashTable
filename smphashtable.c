@@ -79,8 +79,8 @@ struct hash_table {
 };
 
 // Forward declaration of functions
-void init_hash_table(struct hash_table *hash_table);
 void init_hash_partition(struct hash_table *hash_table, struct partition *p);
+void destroy_hash_partition(struct partition *p);
 void *hash_table_server(void* args);
 void set_affinity(int cpu_id);
 
@@ -98,32 +98,20 @@ struct hash_table *create_hash_table(size_t max_size, int nservers)
   hash_table->nclients = 0;
   hash_table->max_size = max_size;
 
-  init_hash_table(hash_table);  
+  hash_table->partitions = memalign(CACHELINE, hash_table->nservers * sizeof(struct partition));
+  hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
+  for (int i = 0; i < hash_table->nservers; i++) {
+    init_hash_partition(hash_table, &hash_table->partitions[i]);
+  }
 
   hash_table->threads = (pthread_t *)malloc(nservers * sizeof(pthread_t));
   hash_table->thread_data = (struct thread_args *)malloc(nservers * sizeof(struct thread_args));
   return hash_table;
 }
 
-void init_hash_table(struct hash_table *hash_table)
-{
-  //for (i = 0; i < NRANGE; i++) {
-  //  map[i] = i % npartition;
-  //}
-
-  hash_table->partitions = memalign(CACHELINE, hash_table->nservers * sizeof(struct partition));
-  for (int i = 0; i < hash_table->nservers; i++) {
-    init_hash_partition(hash_table, &hash_table->partitions[i]);
-  }
-
-  hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
-
-  assert((unsigned long) &hash_table->partitions[0] % CACHELINE == 0);
-  assert((unsigned long) &hash_table->partitions[1] % CACHELINE == 0);
-}
-
 void init_hash_partition(struct hash_table *hash_table, struct partition *p)
 {
+  assert((unsigned long)p % CACHELINE == 0);
   p->max_size = hash_table->max_size / hash_table->nservers;
   p->nhash = p->max_size / BUCKET_LOAD;
   p->nhit = 0;
@@ -147,17 +135,30 @@ void init_hash_partition(struct hash_table *hash_table, struct partition *p)
 void destroy_hash_table(struct hash_table *hash_table)
 {
   for (int i = 0; i < hash_table->nservers; i++) {
-    free(hash_table->partitions[i].table);
+    destroy_hash_partition(&hash_table->partitions[i]);
   }
   free(hash_table->partitions);
 
   for (int i = 0; i < hash_table->nclients; i++) {
     free(hash_table->boxes[i].boxes);
   }
+  free(hash_table->boxes);
 
   free(hash_table->threads);
   free(hash_table->thread_data);
   free(hash_table);
+}
+
+void destroy_hash_partition(struct partition *p)
+{
+  struct lrulist *eh = &p->lru;
+  struct elem *e = TAILQ_FIRST(eh);
+  while (e != NULL) {
+    release_hash_value(e->value);
+    e = TAILQ_NEXT(e, lru);
+  }
+  free(p->table);
+  free(p->elems); 
 }
 
 void start_hash_table_servers(struct hash_table *hash_table, int first_core) 
@@ -399,17 +400,17 @@ int hash_get_bucket(struct partition *p, hash_key key)
 
 struct elem * hash_lookup(struct partition *p, hash_key key)
 {
-  struct elist *eh;
-  eh = &(p->table[hash_get_bucket(p, key)].chain);
+  struct elist *eh = &(p->table[hash_get_bucket(p, key)].chain);
   struct elem *e = TAILQ_FIRST(eh);
   while (e != NULL) {
     if (e->key == key) {
       p->nhit++;
+      lru(p, e);
       return e;
     }
     e = TAILQ_NEXT(e, chain);
   }
-  return e;
+  return NULL;
 }
 
 struct elem * hash_insert(struct partition *p, hash_key key, struct hash_value* value)
@@ -427,14 +428,14 @@ struct elem * hash_insert(struct partition *p, hash_key key, struct hash_value* 
     e = TAILQ_FIRST(&p->free);
     assert(e);
     TAILQ_REMOVE(&p->free, e, free);
+    TAILQ_INSERT_TAIL(eh, e, chain);
+    TAILQ_INSERT_HEAD(&p->lru, e, lru);
   } else {
     release_hash_value(e->value);
   }
 
   e->key = key;
   e->value = value;
-  TAILQ_INSERT_TAIL(eh, e, chain);
-  TAILQ_INSERT_HEAD(&p->lru, e, lru);
   return e;
 }
 

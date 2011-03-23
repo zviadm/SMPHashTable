@@ -1,4 +1,4 @@
-CFLAGS := -std=c99 -Wall -msse2 -D_GNU_SOURCE
+CFLAGS := -std=c99 -Wall -g -msse2 -D_GNU_SOURCE
 
 lib_objects = onewaybuffer.o smphashtable.o
 
