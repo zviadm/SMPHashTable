@@ -1,7 +1,8 @@
 #ifndef __ONEWAYBUFFER_H_
 #define __ONEWAYBUFFER_H_
 
-#define CACHELINE             64  // size of cache line in bytes
+#include "util.h"
+
 #define ONEWAY_BUFFER_SIZE    (CACHELINE >> 3) 
 #define BUFFER_FLUSH_COUNT    4
 

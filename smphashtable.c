@@ -1,16 +1,15 @@
 #include <assert.h>
 #include <malloc.h>
 #include <pthread.h>
-#include <sched.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <sys/syscall.h>
-#include <unistd.h>
 #include <xmmintrin.h>
 
+#include "alock.h"
 #include "onewaybuffer.h"
 #include "smphashtable.h"
+#include "util.h"
 
 #define MAX_CLIENTS       50
 #define BUCKET_LOAD       64
@@ -43,8 +42,9 @@ struct partition {
   int nhash;
   size_t size;
   size_t max_size;
-  int nhit;
+  int nhits;
   struct elem *elems;
+  struct alock lock;
 } __attribute__ ((aligned (CACHELINE)));
 
 /**
@@ -70,6 +70,8 @@ struct hash_table {
   int nclients;
   size_t max_size;
 
+  pthread_mutex_t create_client_lock;
+
   int quitting;
   pthread_t *threads;
   struct thread_args *thread_data;
@@ -82,7 +84,6 @@ struct hash_table {
 void init_hash_partition(struct hash_table *hash_table, struct partition *p);
 void destroy_hash_partition(struct partition *p);
 void *hash_table_server(void* args);
-void set_affinity(int cpu_id);
 
 struct elem * hash_lookup(struct partition *p, hash_key key);
 struct elem * hash_insert(struct partition *p, hash_key key, struct hash_value* value);
@@ -91,12 +92,20 @@ void lru(struct partition *p, struct elem *e);
 inline int hash_get_bucket(struct partition *p, hash_key key);
 inline int hash_get_server(struct hash_table *hash_table, hash_key key);
 
+inline int max(int a, int b) 
+{ 
+  if (a > b) return a; 
+  else return b; 
+}
+
 struct hash_table *create_hash_table(size_t max_size, int nservers) 
 {
   struct hash_table *hash_table = (struct hash_table *)malloc(sizeof(struct hash_table));
   hash_table->nservers = nservers;
   hash_table->nclients = 0;
   hash_table->max_size = max_size;
+
+  pthread_mutex_init(&hash_table->create_client_lock, NULL);
 
   hash_table->partitions = memalign(CACHELINE, hash_table->nservers * sizeof(struct partition));
   hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
@@ -107,29 +116,6 @@ struct hash_table *create_hash_table(size_t max_size, int nservers)
   hash_table->threads = (pthread_t *)malloc(nservers * sizeof(pthread_t));
   hash_table->thread_data = (struct thread_args *)malloc(nservers * sizeof(struct thread_args));
   return hash_table;
-}
-
-void init_hash_partition(struct hash_table *hash_table, struct partition *p)
-{
-  assert((unsigned long)p % CACHELINE == 0);
-  p->max_size = hash_table->max_size / hash_table->nservers;
-  p->nhash = p->max_size / BUCKET_LOAD;
-  p->nhit = 0;
-  p->size = 0;
-
-  p->table = memalign(CACHELINE, p->nhash * sizeof(struct bucket));
-  assert((unsigned long) &(p->table[0]) % CACHELINE == 0);
-  for (int i = 0; i < p->nhash; i++) {
-    TAILQ_INIT(&(p->table[i].chain));
-  }
-
-  TAILQ_INIT(&p->lru);
-  TAILQ_INIT(&p->free);
-  p->elems = memalign(CACHELINE, (p->max_size / ELEM_OVERHEAD) * sizeof(struct elem));
-  for (int i = 0; i < p->max_size / ELEM_OVERHEAD; i++) {
-    struct elem *e = &p->elems[i];
-    TAILQ_INSERT_TAIL(&p->free, e, free);
-  }
 }
 
 void destroy_hash_table(struct hash_table *hash_table)
@@ -146,7 +132,34 @@ void destroy_hash_table(struct hash_table *hash_table)
 
   free(hash_table->threads);
   free(hash_table->thread_data);
+  pthread_mutex_destroy(&hash_table->create_client_lock); 
   free(hash_table);
+}
+
+void init_hash_partition(struct hash_table *hash_table, struct partition *p)
+{
+  assert((unsigned long)p % CACHELINE == 0);
+  p->max_size = hash_table->max_size / hash_table->nservers;
+  p->nhash = max(10, p->max_size / BUCKET_LOAD);
+  p->nhits = 0;
+  p->size = 0;
+
+  p->table = memalign(CACHELINE, p->nhash * sizeof(struct bucket));
+  assert((unsigned long) &(p->table[0]) % CACHELINE == 0);
+  for (int i = 0; i < p->nhash; i++) {
+    TAILQ_INIT(&(p->table[i].chain));
+  }
+
+  TAILQ_INIT(&p->lru);
+  TAILQ_INIT(&p->free);
+  unsigned int nelems = max(1000000, p->max_size / (10 * sizeof(struct elem)));
+  p->elems = memalign(CACHELINE, nelems * sizeof(struct elem));
+  for (int i = 0; i < nelems; i++) {
+    struct elem *e = &p->elems[i];
+    TAILQ_INSERT_TAIL(&p->free, e, free);
+  }
+
+  anderson_init(&p->lock, hash_table->nservers);
 }
 
 void destroy_hash_partition(struct partition *p)
@@ -188,6 +201,7 @@ void stop_hash_table_servers(struct hash_table *hash_table)
 
 int create_hash_table_client(struct hash_table *hash_table)
 {
+  pthread_mutex_lock(&hash_table->create_client_lock);
   int client = hash_table->nclients;
   assert(hash_table->nclients <= MAX_CLIENTS);
 
@@ -201,6 +215,7 @@ int create_hash_table_client(struct hash_table *hash_table)
   assert((unsigned long) &hash_table->boxes[client].boxes[1] % CACHELINE == 0);
 
   __sync_add_and_fetch(&hash_table->nclients, 1);
+  pthread_mutex_unlock(&hash_table->create_client_lock);
   return client;
 }
 
@@ -254,19 +269,6 @@ void *hash_table_server(void* args)
   return 0;
 }
 
-void set_affinity(int cpu_id)
-{
- int tid = syscall(__NR_gettid);
- cpu_set_t mask;
- CPU_ZERO(&mask);
- CPU_SET(cpu_id, &mask);
- int r = sched_setaffinity(tid, sizeof(mask), &mask);
- if (r < 0) {
-   fprintf(stderr, "couldn't set affinity for cpu_id:%d\n", cpu_id);
-   exit(1);
- }
-}
-
 struct hash_value * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key)
 {
   unsigned long res;
@@ -287,6 +289,28 @@ void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key,
 
   int s = hash_get_server(hash_table, key);
   buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 2, msg_data);
+}
+
+struct hash_value * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
+{
+  int s = hash_get_server(hash_table, key);
+  struct hash_value *value = NULL;
+  int extra;
+  anderson_acquire(&hash_table->partitions[s].lock, &extra);
+  struct elem *e = hash_lookup(&hash_table->partitions[s], key);
+  if (e != NULL) value = e->value;
+  anderson_release(&hash_table->partitions[s].lock, &extra);
+  return value;
+}
+
+void locking_hash_insert(struct hash_table *hash_table, hash_key key, size_t size, char *data)
+{
+  int s = hash_get_server(hash_table, key);
+  struct hash_value *value = alloc_hash_value(size, data); 
+  int extra;
+  anderson_acquire(&hash_table->partitions[s].lock, &extra);
+  hash_insert(&hash_table->partitions[s], key, value);
+  anderson_release(&hash_table->partitions[s].lock, &extra);
 }
 
 /*
@@ -404,7 +428,7 @@ struct elem * hash_lookup(struct partition *p, hash_key key)
   struct elem *e = TAILQ_FIRST(eh);
   while (e != NULL) {
     if (e->key == key) {
-      p->nhit++;
+      p->nhits++;
       lru(p, e);
       return e;
     }
@@ -415,23 +439,29 @@ struct elem * hash_lookup(struct partition *p, hash_key key)
 
 struct elem * hash_insert(struct partition *p, hash_key key, struct hash_value* value)
 {
+  assert(value->size <= p->max_size);
   struct elist *eh = &(p->table[hash_get_bucket(p, key)].chain);
-  p->size += ELEM_OVERHEAD + value->size;
-  while (p->size > p->max_size) {
+  struct elem *e = hash_lookup(p, key);
+
+  p->size += value->size;
+  if (e != NULL) {
+    p->size -= e->value->size;
+    release_hash_value(e->value);
+  } 
+
+  while ((p->size > p->max_size) || 
+      ((e == NULL) && (TAILQ_FIRST(&p->free) == NULL))) {
     struct elem *l = TAILQ_LAST(&p->lru, lrulist);
     assert(l);
     hash_remove(p, l);
   } 
 
-  struct elem *e = hash_lookup(p, key);
   if (e == NULL) {
     e = TAILQ_FIRST(&p->free);
     assert(e);
     TAILQ_REMOVE(&p->free, e, free);
     TAILQ_INSERT_TAIL(eh, e, chain);
     TAILQ_INSERT_HEAD(&p->lru, e, lru);
-  } else {
-    release_hash_value(e->value);
   }
 
   e->key = key;
@@ -444,7 +474,7 @@ void hash_remove(struct partition *p, struct elem *e)
   struct elist *eh = &(p->table[hash_get_bucket(p, e->key)].chain);
   TAILQ_REMOVE(eh, e, chain);
   TAILQ_REMOVE(&p->lru, e, lru);
-  p->size -= ELEM_OVERHEAD + e->value->size;
+  p->size -= e->value->size;
   assert(p->size >= 0);
   release_hash_value(e->value);
   TAILQ_INSERT_TAIL(&p->free, e, free);
@@ -457,6 +487,21 @@ void lru(struct partition *p, struct elem *e)
   TAILQ_INSERT_HEAD(&p->lru, e, lru);
 }
 
+/**
+ * Hash Table Counters and Stats
+ */
+int stats_get_nhits(struct hash_table *hash_table)
+{
+  int nhits = 0;
+  for (int i = 0; i < hash_table->nservers; i++) {
+    nhits += hash_table->partitions[i].nhits;
+  }
+  return nhits;
+}
+
+/**
+ * hash_value structure memroy management functions
+ */
 struct hash_value * alloc_hash_value(size_t size, char *data)
 {
   struct hash_value *value = (struct hash_value *)malloc(size + sizeof(struct hash_value));
@@ -477,3 +522,4 @@ void release_hash_value(struct hash_value *value)
     free(value);
   }
 }
+

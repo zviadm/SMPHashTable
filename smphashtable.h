@@ -19,6 +19,20 @@ struct hash_value {
 };
 
 /**
+ * struct hash_query - Hash table query
+ * @optype: 0 - lookup, 1 - insert
+ * @key: key to lookup or insert
+ * @size: size of data to insert
+ * @data: pointer to data
+ */
+struct hash_query {
+  int optype;
+  hash_key key;
+  size_t size;
+  char *data;
+};
+
+/**
  * struct hash_table
  */
 struct hash_table;
@@ -82,6 +96,11 @@ struct hash_value * smp_hash_lookup(struct hash_table *hash_table, int client_id
  * @data: pointer to data
  */
 void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, size_t size, char *data);
+
+struct hash_value * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
+void locking_hash_insert(struct hash_table *hash_table, hash_key key, size_t size, char *data);
+
+int stats_get_nhits(struct hash_table *hash_table);
 
 struct hash_value * alloc_hash_value(size_t size, char *data);
 void retain_hash_value(struct hash_value *value);

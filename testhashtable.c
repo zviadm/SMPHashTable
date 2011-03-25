@@ -71,7 +71,7 @@ void test2()
   printf("----------- Test 2 Start -----------\n");
   printf("Creating Hash Table...\n");
   struct hash_table *table = create_hash_table(16384, 2);
-  int max_count = 16384 / 2 / (sizeof(hash_key) + sizeof(struct hash_value) + 8);
+  int max_count = 16384 / 2 / 8;
   printf("Starting Servers...\n");
   start_hash_table_servers(table, 0);
 
@@ -94,10 +94,22 @@ void test2()
 
   printf("Inserting Extra Element...\n");
   long val = max_count;
-  smp_hash_insert(table, c, val << 1, 8, (char *)&val);
+  smp_hash_insert(table, c, max_count << 1, 8, (char *)&val);
   
   value = smp_hash_lookup(table, c, 0 << 1);
   assert(value == NULL);
+
+  printf("Replacing Element with larger value...\n");
+  long large_val[3] = {1, 2, 3};
+  smp_hash_insert(table, c, max_count << 1, 24, (char *)large_val);
+  
+  value = smp_hash_lookup(table, c, 1 << 1);
+  assert(value == NULL);
+  value = smp_hash_lookup(table, c, 2 << 1);
+  assert(value == NULL);
+  value = smp_hash_lookup(table, c, 3 << 1);
+  assert_hash_value(value, 3);
+  release_hash_value(value);
 
   printf("Stopping Servers...\n");
   stop_hash_table_servers(table);

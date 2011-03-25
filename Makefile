@@ -1,8 +1,8 @@
 CFLAGS = -std=c99 -Wall -msse2 -D_GNU_SOURCE -g -O2
 					 
-lib_objects = onewaybuffer.o smphashtable.o
+lib_objects = onewaybuffer.o smphashtable.o util.o alock.o
 
-all: testhashtable
+all: testhashtable benchmarkhashtable
 
 nodebug:
 	make clean; make CFLAGS='-std=c99 -Wall -msse2 -D_GNU_SOURCE -g -O2 -DNDEBUG'
@@ -10,11 +10,17 @@ nodebug:
 testhashtable: testhashtable.o $(lib_objects)
 	gcc -o testhashtable testhashtable.o  $(lib_objects) -lpthread # -pg -lprofiler
 
-smphashtable.o: smphashtable.c smphashtable.h
-onewaybuffer.o: onewaybuffer.c onewaybuffer.h
-testhashtable.o: testhashtable.c
+benchmarkhashtable: benchmarkhashtable.o $(lib_objects)
+	gcc -o benchmarkhashtable benchmarkhashtable.o  $(lib_objects) -lpthread # -pg -lprofiler
+
+smphashtable.o: smphashtable.c smphashtable.h onewaybuffer.h util.h alock.h
+onewaybuffer.o: onewaybuffer.c onewaybuffer.h util.h
+util.o: util.c util.h
+alock.o: alock.c alock.h
+testhashtable.o: testhashtable.c smphashtable.h util.h
+benchmarkhashtable.o: benchmarkhashtable.c smphashtable.h util.h
 
 .PHONY: clean
 clean: 
-	rm testhashtable *.o 
+	rm testhashtable benchmarkhashtable *.o 
 
