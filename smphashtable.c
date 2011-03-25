@@ -226,17 +226,22 @@ void *hash_table_server(void* args)
   struct hash_table *hash_table = ((struct thread_args *) args)->hash_table;
   struct partition *p = &hash_table->partitions[s];
   struct box_array *boxes = hash_table->boxes;
-  unsigned long localbuf[SERVER_READ_COUNT];
+  unsigned long localbuf[ONEWAY_BUFFER_SIZE];
 
   set_affinity(c);
 
 //  start_counters(c, cpuseq[c]);
 //  read_counters(c);
+  int quitting = 0;
+  while (quitting == 0) {
+    // after server receives quit signal it should make sure to complete all 
+    // queries that are in the buffers
+    quitting = hash_table->quitting;
 
-  while (hash_table->quitting == 0) {
     int nclients = hash_table->nclients;
     for (int i = 0; i < nclients; i++) {
-      int count = buffer_read_all(&boxes[i].boxes[s].in, SERVER_READ_COUNT, localbuf);
+      int count = 
+        buffer_read_all(&boxes[i].boxes[s].in, (quitting == 0) ? SERVER_READ_COUNT : ONEWAY_BUFFER_SIZE, localbuf);
       if (count == 0) continue;
 
       int k = 0;

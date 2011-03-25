@@ -9,6 +9,7 @@ void anderson_init(struct alock *al, int nthread)
   assert(nthread < MAX_NTHREAD);
   al->has_lock[0].x = 1;
   al->nthread = nthread;
+  al->next_slot = 0;
 }
 
 void anderson_acquire(struct alock *lock, int *extra)

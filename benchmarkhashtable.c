@@ -104,11 +104,13 @@ void run_benchmark()
 
   int r;
   pthread_t *cthreads = (pthread_t *)malloc(nclients * sizeof(pthread_t));
+  int *thread_id = (int *)malloc(nclients * sizeof(pthread_t));
   for (int i = 0; i < nclients; i++) {
+    thread_id[i] = i;
     r = pthread_create(&cthreads[i], NULL, 
         (design == 1) ? client_design1 : 
         (design == 2) ? client_design2 : client_design3, 
-        (void *) (long)i);
+        (void *) &thread_id[i]);
     assert(r == 0);
   }
 
@@ -129,6 +131,7 @@ void run_benchmark()
   printf("nservers: %d, nclients: %d, partition size: %zu (bytes), nhits / niters: %.3f\n", 
       nservers, nclients, size / nservers, (double)stats_get_nhits(hash_table) / niters);
 
+  free(thread_id);
   free(cthreads);
   free(cdata);
   destroy_hash_table(hash_table);
@@ -153,7 +156,7 @@ void get_random_query(int client_id, struct hash_query *query)
 
 void * client_design1(void *args)
 {
-  long c = (long)args;
+  int c = *(int *)args;
   set_affinity(c);
   
   int cid = create_hash_table_client(hash_table);
@@ -180,7 +183,7 @@ void * client_design2(void *args)
 
 void * client_design3(void *args)
 {
-  long c = (long)args;
+  int c = *(int *)args;
   set_affinity(c);
   
   struct hash_query query;
