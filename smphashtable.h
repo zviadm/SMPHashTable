@@ -1,6 +1,8 @@
 #ifndef __SMPHASHTABLE_H_
 #define __SMPHASHTABLE_H_
 
+#include "util.h"
+
 /**
  * hash_key - Hash table key type
  */
@@ -16,7 +18,7 @@ struct hash_value {
   int ref_count;
   size_t size;
   char data[0];
-};
+} __attribute__ ((aligned (CACHELINE)));
 
 /**
  * struct hash_query - Hash table query

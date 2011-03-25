@@ -124,7 +124,8 @@ void run_benchmark()
   double tend = now();
 
   // print out all the important information
-  printf("Benchmark done. Total time: %.3f, Iterations: %d\n", tend - tstart, niters);
+  printf("Benchmark Done. Design %d - Total time: %.3f, Iterations: %d\n", 
+      design, tend - tstart, niters);
   printf("nservers: %d, nclients: %d, partition size: %zu (bytes), nhits / niters: %.3f\n", 
       nservers, nclients, size / nservers, (double)stats_get_nhits(hash_table) / niters);
 
@@ -183,7 +184,7 @@ void * client_design3(void *args)
   set_affinity(c);
   
   struct hash_query query;
-  struct hash_value *value;
+  struct hash_value *value = NULL;
   for (int i = 0; i < niters / nclients; i++) {
     // generate random query
     get_random_query(c, &query);

@@ -298,7 +298,10 @@ struct hash_value * locking_hash_lookup(struct hash_table *hash_table, hash_key 
   int extra;
   anderson_acquire(&hash_table->partitions[s].lock, &extra);
   struct elem *e = hash_lookup(&hash_table->partitions[s], key);
-  if (e != NULL) value = e->value;
+  if (e != NULL) {
+    value = e->value;
+    retain_hash_value(e->value);
+  }
   anderson_release(&hash_table->partitions[s].lock, &extra);
   return value;
 }
@@ -504,7 +507,7 @@ int stats_get_nhits(struct hash_table *hash_table)
  */
 struct hash_value * alloc_hash_value(size_t size, char *data)
 {
-  struct hash_value *value = (struct hash_value *)malloc(size + sizeof(struct hash_value));
+  struct hash_value *value = (struct hash_value *)memalign(CACHELINE, sizeof(struct hash_value) + size);
   value->ref_count = 1;
   value->size = size;
   memcpy(value->data, data, size);
