@@ -296,6 +296,97 @@ void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key,
   buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 2, msg_data);
 }
 
+void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, struct hash_value **values)
+{
+  int pindex = 0;
+
+  int *pending_count = (int*)malloc(hash_table->nservers * sizeof(int));
+  memset(pending_count, 0, hash_table->nservers * sizeof(int));
+
+  int *localbuf_index = (int*)malloc(hash_table->nservers * sizeof(int));
+  int *localbuf_size = (int*)malloc(hash_table->nservers * sizeof(int));
+  unsigned long *localbuf = (unsigned long*)malloc(hash_table->nservers * ONEWAY_BUFFER_SIZE * sizeof(unsigned long));
+  memset(localbuf_index, 0, hash_table->nservers * sizeof(int));
+  memset(localbuf_size, 0, hash_table->nservers * sizeof(int));
+  memset(localbuf, 0, hash_table->nservers * ONEWAY_BUFFER_SIZE * sizeof(unsigned long));
+  
+  struct box_array *boxes = hash_table->boxes;
+  unsigned long msg_data[2];
+
+  for(int i = 0; i < nqueries; i++) {
+    int s = hash_get_server(hash_table, queries[i].key); 
+
+    while (pending_count[s] >= ONEWAY_BUFFER_SIZE) {
+      // skip all hash inserts
+      while (queries[pindex].optype == 1) {
+        values[pindex] = NULL; 
+        pindex++;
+      } 
+
+      int ps = hash_get_server(hash_table, queries[pindex].key); 
+      if (localbuf_index[ps] == localbuf_size[ps]) {
+        int count;
+        if ((count = buffer_read_all(&boxes[client_id].boxes[ps].out, ONEWAY_BUFFER_SIZE, &localbuf[ps * ONEWAY_BUFFER_SIZE])) == 0) {
+          buffer_flush(&boxes[client_id].boxes[ps].in);
+          while ((count = buffer_read_all(&boxes[client_id].boxes[ps].out, ONEWAY_BUFFER_SIZE, &localbuf[ps * ONEWAY_BUFFER_SIZE])) == 0) {
+            _mm_pause();
+          }
+        }
+        pending_count[ps] -= count;
+        localbuf_index[ps] = 0;
+        localbuf_size[ps] = count;
+      }
+
+      values[pindex] = (struct hash_value *)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
+      pindex++;
+      localbuf_index[ps]++;
+    }
+
+    if (queries[i].optype == 0) {
+      buffer_write(&boxes[client_id].boxes[s].in, queries[i].key);
+      pending_count[s]++;
+    } else {
+      msg_data[0] = (unsigned long)queries[i].key | HASH_INSERT_MASK;
+      msg_data[1] = (unsigned long)alloc_hash_value(queries[i].size, queries[i].data);
+
+      buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 2, msg_data);
+    }
+  }
+
+  for (int i = 0; i < hash_table->nservers; i++) {
+    buffer_flush(&boxes[client_id].boxes[i].in);
+  }
+
+  while (pindex < nqueries) {
+    if (queries[pindex].optype == 1) {
+      // skip hash inserts
+      values[pindex] = NULL; 
+      pindex++;
+    } else {
+      int ps = hash_get_server(hash_table, queries[pindex].key); 
+      if (localbuf_index[ps] == localbuf_size[ps]) {
+        int count;
+        while ((count = buffer_read_all(&boxes[client_id].boxes[ps].out, ONEWAY_BUFFER_SIZE, &localbuf[ps * ONEWAY_BUFFER_SIZE])) == 0) {
+          _mm_pause();
+        }
+
+        pending_count[ps] -= count;
+        localbuf_index[ps] = 0;
+        localbuf_size[ps] = count;
+      }
+
+      values[pindex] = (struct hash_value *)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
+      pindex++;
+      localbuf_index[ps]++;
+    }
+  }
+
+  free(pending_count);
+  free(localbuf_index);
+  free(localbuf_size);
+  free(localbuf);
+}
+
 struct hash_value * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
 {
   int s = hash_get_server(hash_table, key);
@@ -320,102 +411,6 @@ void locking_hash_insert(struct hash_table *hash_table, hash_key key, size_t siz
   hash_insert(&hash_table->partitions[s], key, value);
   anderson_release(&hash_table->partitions[s].lock, &extra);
 }
-
-/*
-void (void *xa)
-{
-  const int cli = ((thread_args_t*) xa)->id; // client number, 0..clients
-  const int c = ((thread_args_t*) xa)->core;
-
-  const unsigned int max_pending_count = 10 * nserver * ONEWAY_BUFFER_SIZE;
-  int pending_head_index = 0;
-  int pending_tail_index = 0;
-  int *pending_servers = (int*)malloc(max_pending_count * sizeof(int));
-
-  int *pending_count = (int*)malloc(nserver * sizeof(int));
-  memset(pending_count, 0, nserver * sizeof(int));
-
-  int *localbuf_index = (int*)malloc(nserver * sizeof(int));
-  int *localbuf_size = (int*)malloc(nserver * sizeof(int));
-  unsigned int *localbuf = (unsigned int*)malloc(nserver * ONEWAY_BUFFER_SIZE * sizeof(unsigned int));
-  memset(localbuf_index, 0, nserver * sizeof(int));
-  memset(localbuf_size, 0, nserver * sizeof(int));
-  memset(localbuf, 0, nserver * ONEWAY_BUFFER_SIZE * sizeof(unsigned int));
-
-  set_affinity(cpuseq[c]);
-#ifdef COUNTER
-  start_counters(c, cpuseq[c]);
-  read_counters(c);
-#endif
-  for(int i = 0; i < niter; i++) {
-    int r = draw(c) & query_mask;
-    int s = map[r & MASK];
-    assert(s < nserver);
-
-    while (pending_count[s] >= ONEWAY_BUFFER_SIZE) {
-      const unsigned int ps = pending_servers[pending_head_index];
-      pending_head_index = (pending_head_index + 1) % max_pending_count;
-      if (localbuf_index[ps] == localbuf_size[ps]) {
-        int count;
-        if ((count = BufferReadAll(&boxes[ps].boxes[cli].box.buffer.out, ONEWAY_BUFFER_SIZE, &localbuf[ps * ONEWAY_BUFFER_SIZE])) == 0) {
-          BufferFlush(&boxes[ps].boxes[cli].box.buffer.in);
-          while ((count = BufferReadAll(&boxes[ps].boxes[cli].box.buffer.out, ONEWAY_BUFFER_SIZE, &localbuf[ps * ONEWAY_BUFFER_SIZE])) == 0) {
-            _mm_pause();
-          }
-        }
-        pending_count[ps] -= count;
-        localbuf_index[ps] = 0;
-        localbuf_size[ps] = count;
-      }
-
-      // the result will be in localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]]
-      //printf("%d - %u\n", cli, localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]]); 
-      localbuf_index[ps]++;
-    }
-
-    BufferWrite(&boxes[s].boxes[cli].box.buffer.in, r);
-    pending_servers[pending_tail_index] = s;
-    pending_tail_index = (pending_tail_index + 1) % max_pending_count; 
-    pending_count[s]++;
-  }
-
-  for (int i = 0; i < nserver; i++) {
-    BufferFlush(&boxes[i].boxes[cli].box.buffer.in);
-  }
-
-  while (pending_head_index != pending_tail_index) {
-    const unsigned int ps = pending_servers[pending_head_index];
-    pending_head_index = (pending_head_index + 1) % max_pending_count;
-    if (localbuf_index[ps] == localbuf_size[ps]) {
-      int count;
-      while ((count = BufferReadAll(&boxes[ps].boxes[cli].box.buffer.out, ONEWAY_BUFFER_SIZE, &localbuf[ps * ONEWAY_BUFFER_SIZE])) == 0) {
-        _mm_pause();
-      }
-
-      pending_count[ps] -= count;
-      localbuf_index[ps] = 0;
-      localbuf_size[ps] = count;
-    }
-
-    // the result will be in localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]]
-    //printf("%d - %u\n", cli, localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]]); 
-    localbuf_index[ps]++;
-  }
-
-#ifdef COUNTER
-  read_counters(c);
-#endif
-  counts[cli] = niter;
-
-  free(pending_servers);
-  free(pending_count);
-  free(localbuf_index);
-  free(localbuf_size);
-  free(localbuf);
-  return (void *) 0;
-}
-*/
-
 
 /**
  * Hash Storage Operations

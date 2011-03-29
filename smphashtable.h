@@ -99,6 +99,8 @@ struct hash_value * smp_hash_lookup(struct hash_table *hash_table, int client_id
  */
 void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, size_t size, char *data);
 
+void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, struct hash_value **values);
+
 struct hash_value * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
 void locking_hash_insert(struct hash_table *hash_table, hash_key key, size_t size, char *data);
 

@@ -70,8 +70,8 @@ void test2()
 {
   printf("----------- Test 2 Start -----------\n");
   printf("Creating Hash Table...\n");
-  struct hash_table *table = create_hash_table(16384, 2);
-  int max_count = 16384 / 2 / 8;
+  struct hash_table *table = create_hash_table(1024, 2);
+  int max_count = 1024 / 2 / 8;
   printf("Starting Servers...\n");
   start_hash_table_servers(table, 0);
 
@@ -181,10 +181,60 @@ void test3()
   printf("----------- Test 3 Done! -----------\n");
 }
 
+void test4() 
+{
+  printf("----------- Test 4 Start -----------\n");
+  printf("Creating Hash Table...\n");
+  struct hash_table *table = create_hash_table(16384, 2);
+  printf("Starting Servers...\n");
+  start_hash_table_servers(table, 0);
+
+  // Do some stuff
+  printf("Creating Client...\n");
+  int c = create_hash_table_client(table);
+ 
+  const int nqueries = 1000;
+  struct hash_query queries[2 * nqueries];
+  long data[nqueries];
+
+  for (int i = 0; i < nqueries; i++) {
+    data[i] = i;
+  }
+
+  for (int i = 0; i < nqueries; i++) {
+    queries[i].optype = 1;
+    queries[i].key = i;
+    queries[i].size = 8;
+    queries[i].data = (char*)&data[i];
+
+    queries[nqueries + i].optype = 0;
+    queries[nqueries + i].key = i;
+  }
+
+  printf("Performing All Queries...\n");
+  struct hash_value * values[2 * nqueries];
+  smp_hash_doall(table, c, 2 * nqueries, queries, values);
+
+  printf("Checking All Values...\n");
+  for (int i = 0; i < nqueries; i++) {
+    assert(values[i] == NULL);
+    assert_hash_value(values[nqueries + i], data[i]);
+    release_hash_value(values[nqueries + i]);
+  }
+
+  printf("Stopping Servers...\n");
+  stop_hash_table_servers(table);
+  printf("Destroying Hash Table...\n");
+  destroy_hash_table(table);
+
+  printf("----------- Test 4 Done! -----------\n");
+}
+
 int main(int argc, char *argv[])
 {
   test1();
   test2();
   test3();
+  test4();
   return 0;
 }
