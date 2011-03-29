@@ -324,7 +324,6 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
   memset(localbuf, 0, hash_table->nservers * ONEWAY_BUFFER_SIZE * sizeof(unsigned long));
   
   struct box_array *boxes = hash_table->boxes;
-  unsigned long msg_data[2];
 
   for(int i = 0; i < nqueries; i++) {
     int s = hash_get_server(hash_table, queries[i].key); 
