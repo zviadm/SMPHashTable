@@ -230,11 +230,158 @@ void test4()
   printf("----------- Test 4 Done! -----------\n");
 }
 
+void test5() 
+{
+  printf("----------- Test 5 Start -----------\n");
+  printf("Creating Hash Table...\n");
+  struct hash_table *table = create_hash_table(1024, 2);
+
+  // Do some stuff
+  printf("Inserting Elements...\n");
+  long val;
+  val = 1;
+  locking_hash_insert(table, 123, 8, (char *)&val);
+  val = 2;
+  locking_hash_insert(table, 1234, 8, (char *)&val);
+  val = 3;
+  locking_hash_insert(table, 12345, 8, (char *)&val);
+
+  printf("Looking up Elements...\n");
+  struct hash_value *value;
+  value = locking_hash_lookup(table, 123);
+  assert_hash_value(value, 1);
+  release_hash_value(value);
+
+  value = locking_hash_lookup(table, 1234);
+  assert_hash_value(value, 2);
+  release_hash_value(value);
+
+  value = locking_hash_lookup(table, 12345);
+  assert_hash_value(value, 3);
+  release_hash_value(value);
+
+  value = locking_hash_lookup(table, 122);
+  assert(value == NULL);
+
+  value = locking_hash_lookup(table, 123);
+  assert_hash_value(value, 1);
+  assert(value->ref_count == 2);
+
+  printf("Destroying Hash Table...\n");
+  destroy_hash_table(table);
+
+  assert(value->ref_count == 1);
+  release_hash_value(value);
+
+  printf("----------- Test 5 Done! -----------\n");
+}
+
+void test6() 
+{
+  printf("----------- Test 6 Start -----------\n");
+  printf("Creating Hash Table...\n");
+  struct hash_table *table = create_hash_table(1024, 2);
+  int max_count = 1024 / 2 / 8;
+
+  // Do some stuff
+  printf("Inserting Elements...\n");
+  for (long i = 0; i < max_count; i++) {
+    locking_hash_insert(table, i << 1, 8, (char *)&i);
+  }
+
+  printf("Looking up Elements...\n");
+  struct hash_value *value;
+  for (long i = 0; i < max_count; i++) {
+    value = locking_hash_lookup(table, i << 1);
+    assert_hash_value(value, i);
+    release_hash_value(value);
+  }
+
+  printf("Inserting Extra Element...\n");
+  long val = max_count;
+  locking_hash_insert(table, max_count << 1, 8, (char *)&val);
+  
+  value = locking_hash_lookup(table, 0 << 1);
+  assert(value == NULL);
+
+  printf("Replacing Element with larger value...\n");
+  long large_val[3] = {1, 2, 3};
+  locking_hash_insert(table, max_count << 1, 24, (char *)large_val);
+  
+  value = locking_hash_lookup(table, 1 << 1);
+  assert(value == NULL);
+  value = locking_hash_lookup(table, 2 << 1);
+  assert(value == NULL);
+  value = locking_hash_lookup(table, 3 << 1);
+  assert_hash_value(value, 3);
+  release_hash_value(value);
+
+  printf("Destroying Hash Table...\n");
+  destroy_hash_table(table);
+
+  printf("----------- Test 6 Done! -----------\n");
+}
+
+void test7() 
+{
+  printf("----------- Test 7 Start -----------\n");
+  printf("Creating Hash Table...\n");
+  struct hash_table *table = create_hash_table(16384, 2);
+
+  // Do some stuff
+  printf("Inserting Elements using Client 1...\n");
+  long val;
+  val = 0xDEADBEEF;
+  locking_hash_insert(table, 123, 8, (char *)&val);
+  val = 0xFACEDEAD;
+  locking_hash_insert(table, 1234, 8, (char *)&val);
+
+  // make sure hash insert is completed
+  struct hash_value *value;
+  value = locking_hash_lookup(table, 123);
+  assert_hash_value(value, 0xDEADBEEF);
+  release_hash_value(value);
+
+  value = locking_hash_lookup(table, 1234);
+  assert_hash_value(value, 0xFACEDEAD);
+  release_hash_value(value);
+
+  printf("Looking up Elements using Client 2...\n");
+  value = locking_hash_lookup(table, 123);
+  assert_hash_value(value, 0xDEADBEEF);
+  release_hash_value(value);
+
+  value = locking_hash_lookup(table, 1234);
+  assert_hash_value(value, 0xFACEDEAD);
+  release_hash_value(value);
+  
+  printf("Rewriting Element using Client 2...\n");
+  val = 0xACEACEACE;
+  locking_hash_insert(table, 123, 8, (char *)&val);
+
+  // make sure hash insert is completed
+  value = locking_hash_lookup(table, 123);
+  assert_hash_value(value, 0xACEACEACE);
+  release_hash_value(value);
+
+  printf("Looking up Element using Client 1...\n");
+  value = locking_hash_lookup(table, 123);
+  assert_hash_value(value, 0xACEACEACE);
+  release_hash_value(value);
+
+  printf("Destroying Hash Table...\n");
+  destroy_hash_table(table);
+
+  printf("----------- Test 7 Done! -----------\n");
+}
 int main(int argc, char *argv[])
 {
   test1();
   test2();
   test3();
   test4();
+  test5();
+  test6();
+  test7();
   return 0;
 }
