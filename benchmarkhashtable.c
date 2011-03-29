@@ -16,8 +16,10 @@ int query_mask      = 0xFFFFF;
 int write_threshold = (0.3f * (double)RAND_MAX);
 int design          = 1;
 int first_core      = 1;
+int batch_size      = 10;
 struct hash_table *hash_table;
 char rand_data[10000] = { 0 };
+int iters_per_client; 
 
 struct client_data {
   unsigned int seed;
@@ -49,7 +51,7 @@ int main(int argc, char *argv[])
    * @f: first server core number 
    *
    */
-  while((opt_char = getopt(argc, argv, "s:c:i:n:m:w:d:f:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:c:i:n:m:w:d:f:b:")) != -1) {
     switch (opt_char) {
       case 's':
         nservers = atoi(optarg);
@@ -75,12 +77,16 @@ int main(int argc, char *argv[])
       case 'f':
         first_core = atoi(optarg);
         break;
+      case 'b':
+        batch_size = atoi(optarg);
+        break;
       default:
         printf("usage\n");
         exit(-1);
     }
   }
 
+  iters_per_client = niters / nclients;
   run_benchmark();
   return 0;
 }
@@ -128,8 +134,8 @@ void run_benchmark()
   // print out all the important information
   printf("Benchmark Done. Design %d - Total time: %.3f, Iterations: %d\n", 
       design, tend - tstart, niters);
-  printf("nservers: %d, nclients: %d, partition size: %zu (bytes), nhits / niters: %.3f\n", 
-      nservers, nclients, size / nservers, (double)stats_get_nhits(hash_table) / niters);
+  printf("nservers: %d, nclients: %d, partition size: %zu (bytes), partition overhead: %zu, nhits / niters: %.3f\n", 
+      nservers, nclients, size / nservers, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / niters);
 
   free(thread_id);
   free(cthreads);
@@ -163,7 +169,7 @@ void * client_design1(void *args)
 
   struct hash_query query;
   struct hash_value *value;
-  for (int i = 0; i < niters / nclients; i++) {
+  for (int i = 0; i < iters_per_client; i++) {
     // generate random query
     get_random_query(c, &query);
     if (query.optype == 0) {
@@ -178,6 +184,26 @@ void * client_design1(void *args)
 
 void * client_design2(void *args)
 {
+  int c = *(int *)args;
+  set_affinity(c);
+  
+  int cid = create_hash_table_client(hash_table);
+
+  struct hash_query *queries = (struct hash_query *)malloc(batch_size * sizeof(struct hash_query));
+  struct hash_value **values = (struct hash_value **)malloc(batch_size * sizeof(struct hash_value *));
+  int i = 0;
+  while (i < iters_per_client) {
+    int nqueries = min(iters_per_client - i, batch_size);
+    for (int k = 0; k < nqueries; k++) {
+      get_random_query(c, &queries[k]);
+    }
+    smp_hash_doall(hash_table, cid, nqueries, queries, values);
+    for (int k = 0; k < nqueries; k++) {
+      if (values[k] != NULL) release_hash_value(values[k]);
+    }
+
+    i += nqueries;
+  }
   return NULL;
 }
 
@@ -188,7 +214,7 @@ void * client_design3(void *args)
   
   struct hash_query query;
   struct hash_value *value = NULL;
-  for (int i = 0; i < niters / nclients; i++) {
+  for (int i = 0; i < iters_per_client; i++) {
     // generate random query
     get_random_query(c, &query);
     if (query.optype == 0) {

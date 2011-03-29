@@ -12,7 +12,7 @@
 #include "util.h"
 
 #define MAX_CLIENTS       50
-#define BUCKET_LOAD       64
+#define BUCKET_LOAD       2
 #define SERVER_READ_COUNT BUFFER_FLUSH_COUNT
 #define ELEM_OVERHEAD     (sizeof(hash_key) + sizeof(struct hash_value))
 #define HASH_INSERT_MASK  0x8000000000000000 
@@ -69,6 +69,7 @@ struct hash_table {
   int nservers;
   int nclients;
   size_t max_size;
+  size_t overhead;
 
   pthread_mutex_t create_client_lock;
 
@@ -92,12 +93,6 @@ void lru(struct partition *p, struct elem *e);
 inline int hash_get_bucket(struct partition *p, hash_key key);
 inline int hash_get_server(struct hash_table *hash_table, hash_key key);
 
-inline int max(int a, int b) 
-{ 
-  if (a > b) return a; 
-  else return b; 
-}
-
 struct hash_table *create_hash_table(size_t max_size, int nservers) 
 {
   struct hash_table *hash_table = (struct hash_table *)malloc(sizeof(struct hash_table));
@@ -107,7 +102,12 @@ struct hash_table *create_hash_table(size_t max_size, int nservers)
 
   pthread_mutex_init(&hash_table->create_client_lock, NULL);
 
-  hash_table->partitions = memalign(CACHELINE, hash_table->nservers * sizeof(struct partition));
+  hash_table->overhead = 
+    sizeof(struct hash_table) + nservers * sizeof(struct partition) + 
+    MAX_CLIENTS * sizeof(struct box_array) + nservers * sizeof(pthread_t) +
+    nservers * sizeof(struct thread_args);
+  
+  hash_table->partitions = memalign(CACHELINE, nservers * sizeof(struct partition));
   hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
   for (int i = 0; i < hash_table->nservers; i++) {
     init_hash_partition(hash_table, &hash_table->partitions[i]);
@@ -140,9 +140,11 @@ void init_hash_partition(struct hash_table *hash_table, struct partition *p)
 {
   assert((unsigned long)p % CACHELINE == 0);
   p->max_size = hash_table->max_size / hash_table->nservers;
-  p->nhash = max(10, p->max_size / BUCKET_LOAD);
+  const unsigned int nelems = max(10, p->max_size / (10 * sizeof(struct elem)));
+  p->nhash = max(10, nelems / BUCKET_LOAD);
   p->nhits = 0;
   p->size = 0;
+  hash_table->overhead += p->nhash * sizeof(struct bucket) + nelems * sizeof(struct elem);
 
   p->table = memalign(CACHELINE, p->nhash * sizeof(struct bucket));
   assert((unsigned long) &(p->table[0]) % CACHELINE == 0);
@@ -152,7 +154,6 @@ void init_hash_partition(struct hash_table *hash_table, struct partition *p)
 
   TAILQ_INIT(&p->lru);
   TAILQ_INIT(&p->free);
-  unsigned int nelems = max(1000000, p->max_size / (10 * sizeof(struct elem)));
   p->elems = memalign(CACHELINE, nelems * sizeof(struct elem));
   for (int i = 0; i < nelems; i++) {
     struct elem *e = &p->elems[i];
@@ -204,7 +205,8 @@ int create_hash_table_client(struct hash_table *hash_table)
   pthread_mutex_lock(&hash_table->create_client_lock);
   int client = hash_table->nclients;
   assert(hash_table->nclients <= MAX_CLIENTS);
-
+  
+  hash_table->overhead += hash_table->nservers * sizeof(struct box);
   hash_table->boxes[client].boxes = memalign(CACHELINE, hash_table->nservers * sizeof(struct box));
   for (int i = 0; i < hash_table->nservers; i++) {
     memset((void*)&hash_table->boxes[client].boxes[i], 0, sizeof(struct box));
@@ -226,12 +228,11 @@ void *hash_table_server(void* args)
   struct hash_table *hash_table = ((struct thread_args *) args)->hash_table;
   struct partition *p = &hash_table->partitions[s];
   struct box_array *boxes = hash_table->boxes;
-  unsigned long localbuf[ONEWAY_BUFFER_SIZE];
+  unsigned long localbuf[ONEWAY_BUFFER_SIZE + 1];
+  unsigned long partial_write[MAX_CLIENTS] = { 0 };
 
   set_affinity(c);
 
-//  start_counters(c, cpuseq[c]);
-//  read_counters(c);
   int quitting = 0;
   while (quitting == 0) {
     // after server receives quit signal it should make sure to complete all 
@@ -241,16 +242,29 @@ void *hash_table_server(void* args)
     int nclients = hash_table->nclients;
     for (int i = 0; i < nclients; i++) {
       int count = 
-        buffer_read_all(&boxes[i].boxes[s].in, (quitting == 0) ? SERVER_READ_COUNT : ONEWAY_BUFFER_SIZE, localbuf);
+        buffer_read_all(&boxes[i].boxes[s].in, (quitting == 0) ? SERVER_READ_COUNT : ONEWAY_BUFFER_SIZE, &localbuf[1]);
       if (count == 0) continue;
 
-      int k = 0;
+      int k;
+      if (partial_write[i] & HASH_INSERT_MASK) {
+        k = 0;
+        localbuf[0] = partial_write[i];
+        partial_write[i] = 0;
+      } else {
+        k = 1;
+      }
+
       int j = 0;
-      while (k < count) {
+      while (k < count + 1) {
         if (localbuf[k] & HASH_INSERT_MASK) {
-          assert((k + 1) < count);
-          hash_insert(p, localbuf[k] & (HASH_INSERT_MASK - 1), (struct hash_value *)localbuf[k + 1]);
-          k += 2;
+          if (k == count) {
+            // handle scenario when hash insert message gets cut off 
+            partial_write[i] = localbuf[k];
+            break;
+          } else {
+            hash_insert(p, localbuf[k] & (HASH_INSERT_MASK - 1), (struct hash_value *)localbuf[k + 1]);
+            k += 2;
+          }
         } else {
           struct elem *e = hash_lookup(p, localbuf[k]);
           if (e != NULL) {
@@ -270,7 +284,6 @@ void *hash_table_server(void* args)
     }
   }
 
-//  read_counters(c);
   return 0;
 }
 
@@ -346,10 +359,8 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
       buffer_write(&boxes[client_id].boxes[s].in, queries[i].key);
       pending_count[s]++;
     } else {
-      msg_data[0] = (unsigned long)queries[i].key | HASH_INSERT_MASK;
-      msg_data[1] = (unsigned long)alloc_hash_value(queries[i].size, queries[i].data);
-
-      buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 2, msg_data);
+      buffer_write(&hash_table->boxes[client_id].boxes[s].in, (unsigned long)queries[i].key | HASH_INSERT_MASK);
+      buffer_write(&hash_table->boxes[client_id].boxes[s].in, (unsigned long)alloc_hash_value(queries[i].size, queries[i].data));
     }
   }
 
@@ -500,6 +511,11 @@ int stats_get_nhits(struct hash_table *hash_table)
     nhits += hash_table->partitions[i].nhits;
   }
   return nhits;
+}
+
+size_t stats_get_overhead(struct hash_table *hash_table)
+{
+  return hash_table->overhead;
 }
 
 /**

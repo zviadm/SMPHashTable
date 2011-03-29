@@ -105,6 +105,7 @@ struct hash_value * locking_hash_lookup(struct hash_table *hash_table, hash_key 
 void locking_hash_insert(struct hash_table *hash_table, hash_key key, size_t size, char *data);
 
 int stats_get_nhits(struct hash_table *hash_table);
+size_t stats_get_overhead(struct hash_table *hash_table);
 
 struct hash_value * alloc_hash_value(size_t size, char *data);
 void retain_hash_value(struct hash_value *value);
