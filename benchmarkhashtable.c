@@ -1,10 +1,12 @@
 #include <assert.h>
+#include <malloc.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+#include "ia32perf.h"
 #include "smphashtable.h"
 #include "util.h"
 
@@ -20,6 +22,9 @@ int batch_size      = 10;
 struct hash_table *hash_table;
 char rand_data[10000] = { 0 };
 int iters_per_client; 
+
+uint64_t pmccount[100];
+uint64_t pmclast[100];
 
 struct client_data {
   unsigned int seed;
@@ -104,6 +109,14 @@ void run_benchmark()
   printf("Benchmark starting...\n"); 
   // start the clients
   double tstart = now();
+
+  for (int i = 0; i < 6; i++) {
+    // Event Select values for each pmc
+    // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits)
+    StartCounter(i, 0, 0x00610224);
+    ReadCounter(i, 0, &pmclast[i]);
+  }
+
   if (design == 1 || design == 2) {
     start_hash_table_servers(hash_table, first_core);
   }
@@ -129,13 +142,22 @@ void run_benchmark()
   if (design == 1 || design == 2) {
     stop_hash_table_servers(hash_table);
   }
+
+  double totalpmc = 0;
+  for (int i = 0; i < 6; i++) {
+    uint64_t tmp;
+    ReadCounter(i, 0, &tmp);
+    totalpmc += tmp - pmclast[i];
+  }
+
   double tend = now();
 
   // print out all the important information
   printf("Benchmark Done. Design %d - Total time: %.3f, Iterations: %d\n", 
       design, tend - tstart, niters);
-  printf("nservers: %d, nclients: %d, partition size: %zu (bytes), partition overhead: %zu, nhits / niters: %.3f\n", 
+  printf("nservers: %d, nclients: %d, partition size: %zu(bytes), partition overhead: %zu(bytes), nhits / niters: %.3f\n", 
       nservers, nclients, size / nservers, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / niters);
+  printf("L2 Misses per iteration: %.3f\n", totalpmc / niters);
 
   free(thread_id);
   free(cthreads);
@@ -189,14 +211,18 @@ void * client_design2(void *args)
   
   int cid = create_hash_table_client(hash_table);
 
-  struct hash_query *queries = (struct hash_query *)malloc(batch_size * sizeof(struct hash_query));
-  struct hash_value **values = (struct hash_value **)malloc(batch_size * sizeof(struct hash_value *));
+  struct hash_query *queries = (struct hash_query *)memalign(CACHELINE, batch_size * sizeof(struct hash_query));
+  struct hash_value **values = (struct hash_value **)memalign(CACHELINE, batch_size * sizeof(struct hash_value *));
   int i = 0;
-  while (i < iters_per_client) {
-    int nqueries = min(iters_per_client - i, batch_size);
-    for (int k = 0; k < nqueries; k++) {
+    for (int k = 0; k < batch_size; k++) {
       get_random_query(c, &queries[k]);
     }
+    printf("%d\n", iters_per_client);
+  while (i < iters_per_client) {
+    int nqueries = min(iters_per_client - i, batch_size);
+//    for (int k = 0; k < nqueries; k++) {
+//      get_random_query(c, &queries[k]);
+//    }
     smp_hash_doall(hash_table, cid, nqueries, queries, values);
     for (int k = 0; k < nqueries; k++) {
       if (values[k] != NULL) release_hash_value(values[k]);

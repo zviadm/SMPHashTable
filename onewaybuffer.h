@@ -3,11 +3,11 @@
 
 #include "util.h"
 
-#define ONEWAY_BUFFER_SIZE    (CACHELINE >> 3) 
-#define BUFFER_FLUSH_COUNT    4
+#define ONEWAY_BUFFER_SIZE    32 // must be power of 2 and multiple of (CACHELINE >> 3)
+#define BUFFER_FLUSH_COUNT    8
 
 struct onewaybuffer {
-  volatile unsigned long data[CACHELINE >> 3];
+  volatile unsigned long data[ONEWAY_BUFFER_SIZE];
   volatile long rd_index;
   volatile char padding0[CACHELINE - sizeof(long)];
   volatile long wr_index;

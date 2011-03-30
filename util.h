@@ -3,7 +3,7 @@
 
 #include <sys/types.h>
 
-#define CACHELINE 64
+#define CACHELINE 64 
 
 pid_t gettid(void);
 void set_affinity(int cpu_id);

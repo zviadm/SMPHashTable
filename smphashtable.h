@@ -97,7 +97,7 @@ struct hash_value * smp_hash_lookup(struct hash_table *hash_table, int client_id
  * @size: size of data
  * @data: pointer to data
  */
-void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, size_t size, char *data);
+void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, size_t size, const char *data);
 
 void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, struct hash_value **values);
 
@@ -107,7 +107,7 @@ void locking_hash_insert(struct hash_table *hash_table, hash_key key, size_t siz
 int stats_get_nhits(struct hash_table *hash_table);
 size_t stats_get_overhead(struct hash_table *hash_table);
 
-struct hash_value * alloc_hash_value(size_t size, char *data);
+struct hash_value * alloc_hash_value(size_t size, const char *data);
 void retain_hash_value(struct hash_value *value);
 void release_hash_value(struct hash_value *value);
 
