@@ -214,15 +214,11 @@ void * client_design2(void *args)
   struct hash_query *queries = (struct hash_query *)memalign(CACHELINE, batch_size * sizeof(struct hash_query));
   struct hash_value **values = (struct hash_value **)memalign(CACHELINE, batch_size * sizeof(struct hash_value *));
   int i = 0;
-    for (int k = 0; k < batch_size; k++) {
-      get_random_query(c, &queries[k]);
-    }
-    printf("%d\n", iters_per_client);
   while (i < iters_per_client) {
     int nqueries = min(iters_per_client - i, batch_size);
-//    for (int k = 0; k < nqueries; k++) {
-//      get_random_query(c, &queries[k]);
-//    }
+    for (int k = 0; k < nqueries; k++) {
+      get_random_query(c, &queries[k]);
+    }
     smp_hash_doall(hash_table, cid, nqueries, queries, values);
     for (int k = 0; k < nqueries; k++) {
       if (values[k] != NULL) release_hash_value(values[k]);

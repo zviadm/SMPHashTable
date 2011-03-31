@@ -54,14 +54,13 @@ void test1()
   value = smp_hash_lookup(table, c, 123);
   assert_hash_value(value, 1);
   assert(value->ref_count == 2);
+  release_hash_value(value);
+  assert(value->ref_count == 1);
 
   printf("Stopping Servers...\n");
   stop_hash_table_servers(table);
   printf("Destroying Hash Table...\n");
   destroy_hash_table(table);
-
-  assert(value->ref_count == 1);
-  release_hash_value(value);
 
   printf("----------- Test 1 Done! -----------\n");
 }
@@ -71,7 +70,7 @@ void test2()
   printf("----------- Test 2 Start -----------\n");
   printf("Creating Hash Table...\n");
   struct hash_table *table = create_hash_table(1024, 2);
-  int max_count = 1024 / 2 / 8;
+  int max_count = 1024 / 2 / (2 * CACHELINE);
   printf("Starting Servers...\n");
   start_hash_table_servers(table, 0);
 
@@ -101,7 +100,7 @@ void test2()
 
   printf("Replacing Element with larger value...\n");
   long large_val[3] = {1, 2, 3};
-  smp_hash_insert(table, c, max_count << 1, 24, (char *)large_val);
+  smp_hash_insert(table, c, max_count << 1, 8 + 256, (char *)large_val);
   
   value = smp_hash_lookup(table, c, 1 << 1);
   assert(value == NULL);
@@ -185,7 +184,7 @@ void test4()
 {
   printf("----------- Test 4 Start -----------\n");
   printf("Creating Hash Table...\n");
-  struct hash_table *table = create_hash_table(16384, 2);
+  struct hash_table *table = create_hash_table(256000, 2);
   printf("Starting Servers...\n");
   start_hash_table_servers(table, 0);
 
@@ -266,12 +265,12 @@ void test5()
   value = locking_hash_lookup(table, 123);
   assert_hash_value(value, 1);
   assert(value->ref_count == 2);
+  release_hash_value(value);
+  assert(value->ref_count == 1);
 
   printf("Destroying Hash Table...\n");
   destroy_hash_table(table);
 
-  assert(value->ref_count == 1);
-  release_hash_value(value);
 
   printf("----------- Test 5 Done! -----------\n");
 }
@@ -281,7 +280,7 @@ void test6()
   printf("----------- Test 6 Start -----------\n");
   printf("Creating Hash Table...\n");
   struct hash_table *table = create_hash_table(1024, 2);
-  int max_count = 1024 / 2 / 8;
+  int max_count = 1024 / 2 / (2 * CACHELINE);
 
   // Do some stuff
   printf("Inserting Elements...\n");
@@ -306,7 +305,7 @@ void test6()
 
   printf("Replacing Element with larger value...\n");
   long large_val[3] = {1, 2, 3};
-  locking_hash_insert(table, max_count << 1, 24, (char *)large_val);
+  locking_hash_insert(table, max_count << 1, 8 + 256, (char *)large_val);
   
   value = locking_hash_lookup(table, 1 << 1);
   assert(value == NULL);

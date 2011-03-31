@@ -1,6 +1,7 @@
 #ifndef __SMPHASHTABLE_H_
 #define __SMPHASHTABLE_H_
 
+#include "localmem.h"
 #include "util.h"
 
 /**
@@ -16,6 +17,7 @@ typedef long hash_key;
  */
 struct hash_value {
   int ref_count;
+  struct localmem *mem;
   size_t size;
   char data[0];
 } __attribute__ ((aligned (CACHELINE)));
@@ -107,8 +109,7 @@ void locking_hash_insert(struct hash_table *hash_table, hash_key key, size_t siz
 int stats_get_nhits(struct hash_table *hash_table);
 size_t stats_get_overhead(struct hash_table *hash_table);
 
-struct hash_value * alloc_hash_value(size_t size, const char *data);
 void retain_hash_value(struct hash_value *value);
-void release_hash_value(struct hash_value *value);
+void release_hash_value(struct hash_value *value); 
 
 #endif

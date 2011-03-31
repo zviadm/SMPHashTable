@@ -23,7 +23,6 @@ void buffer_write_all(struct onewaybuffer* buffer, int write_count, const unsign
   assert(write_count <= ONEWAY_BUFFER_SIZE);
   // wait till there is space in buffer
   while (buffer->tmp_wr_index + write_count - 1 >= buffer->rd_index + ONEWAY_BUFFER_SIZE) {
-    assert(0);
     _mm_pause();
   }
 
