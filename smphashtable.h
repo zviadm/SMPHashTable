@@ -42,7 +42,7 @@ struct hash_table;
 
 /**
  * create_hash_table - Create new smp hash table
- * @max_size: maximum size of hash table in bytes
+ * @max_size: maximum number of elements in hash table
  * @nservers: number of servers that serve hash content
  * @return: pointer to the created hash table
  */

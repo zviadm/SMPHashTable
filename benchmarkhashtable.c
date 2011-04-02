@@ -13,7 +13,7 @@
 int nservers        = 1;
 int nclients        = 1;
 int niters          = 1000000;
-size_t size         = 1000000;
+int size            = 1000000;
 int query_mask      = 0xFFFFF;
 int write_threshold = (0.3f * (double)RAND_MAX);
 int design          = 1;
@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
    * @s: number of servers/partitions
    * @c: number of clients
    * @i: number of iterations
-   * @n: size of cache
+   * @n: number of elements in cache
    * @m: log of query mask
    * @w: hash inserts / iterations
    * @d: hash design to use
@@ -113,7 +113,11 @@ void run_benchmark()
   for (int i = 0; i < 6; i++) {
     // Event Select values for each pmc
     // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits)
-    StartCounter(i, 0, 0x00610224);
+    if (StartCounter(i, 0, 0x00610224) != 0) {
+      printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
+             " and are running benchmark with sudo privileges\n", i);
+      exit(1);
+    }
     ReadCounter(i, 0, &pmclast[i]);
   }
 
@@ -155,8 +159,8 @@ void run_benchmark()
   // print out all the important information
   printf("Benchmark Done. Design %d - Total time: %.3f, Iterations: %d\n", 
       design, tend - tstart, niters);
-  printf("nservers: %d, nclients: %d, partition size: %zu(bytes), partition overhead: %zu(bytes), nhits / niters: %.3f\n", 
-      nservers, nclients, size / nservers, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / niters);
+  printf("nservers: %d, nclients: %d, partition overhead: %zu(bytes), nhits / niters: %.3f\n", 
+      nservers, nclients, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / niters);
   printf("L2 Misses per iteration: %.3f\n", totalpmc / niters);
 
   free(thread_id);
@@ -186,38 +190,34 @@ void get_random_query(int client_id, struct hash_query *query)
 
 void * client_design1(void *args)
 {
-  /*
   int c = *(int *)args;
   set_affinity(c);
   
   int cid = create_hash_table_client(hash_table);
 
   struct hash_query query;
-  struct hash_value *value;
+  void *value;
   for (int i = 0; i < iters_per_client; i++) {
     // generate random query
     get_random_query(c, &query);
     if (query.optype == 0) {
       value = smp_hash_lookup(hash_table, cid, query.key);
-      if (value != NULL) release_hash_value(value);
     } else {
-      smp_hash_insert(hash_table, cid, query.key, query.size, query.data);
+      smp_hash_insert(hash_table, cid, query.key, query.value);
     }
   }
-  */
   return NULL;
 }
 
 void * client_design2(void *args)
 {
-  /*
   int c = *(int *)args;
   set_affinity(c);
   
   int cid = create_hash_table_client(hash_table);
 
   struct hash_query *queries = (struct hash_query *)memalign(CACHELINE, batch_size * sizeof(struct hash_query));
-  struct hash_value **values = (struct hash_value **)memalign(CACHELINE, batch_size * sizeof(struct hash_value *));
+  void **values = (void **)memalign(CACHELINE, batch_size * sizeof(void *));
   int i = 0;
   while (i < iters_per_client) {
     int nqueries = min(iters_per_client - i, batch_size);
@@ -225,35 +225,30 @@ void * client_design2(void *args)
       get_random_query(c, &queries[k]);
     }
     smp_hash_doall(hash_table, cid, nqueries, queries, values);
-    for (int k = 0; k < nqueries; k++) {
-      if (values[k] != NULL) release_hash_value(values[k]);
-    }
-
     i += nqueries;
   }
-  */
+
+  free(queries);
+  free(values);
   return NULL;
 }
 
 void * client_design3(void *args)
 {
-  /*
   int c = *(int *)args;
   set_affinity(c);
   
   struct hash_query query;
-  struct hash_value *value = NULL;
+  void *value = NULL;
   for (int i = 0; i < iters_per_client; i++) {
     // generate random query
     get_random_query(c, &query);
     if (query.optype == 0) {
       value = locking_hash_lookup(hash_table, query.key);
-      if (value != NULL) release_hash_value(value);
     } else {
-      locking_hash_insert(hash_table, query.key, query.size, query.data);
+      locking_hash_insert(hash_table, query.key, query.value);
     }
   }
-  */
   return NULL;
 }
 
