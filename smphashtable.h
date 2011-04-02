@@ -1,7 +1,6 @@
 #ifndef __SMPHASHTABLE_H_
 #define __SMPHASHTABLE_H_
 
-#include "localmem.h"
 #include "util.h"
 
 /**
@@ -20,20 +19,6 @@ struct hash_query {
   hash_key key;
   void *value;
 };
-
-/**
- * struct hash_value - Hash table value type
- * @ref_count: reference count
- * @size: size of data
- * @data: object data
- *//*
-struct hash_value {
-  int ref_count;
-  struct localmem *mem;
-  size_t size;
-  char data[0];
-} __attribute__ ((aligned (CACHELINE)));
-*/
 
 /**
  * struct hash_table
@@ -99,12 +84,55 @@ void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key ke
  */
 void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, void *value);
 
+/**
+ * smp_hash_doall: Perform batch hash table queries
+ * @hash_table: pointer to the hash table structure
+ * @client_id: client id to use to communicate with hash table servers
+ * @nqueries: number of queries
+ * @queries: hash table quries
+ * @values: array to return results of queries
+ *
+ * Performing queries in batch is much faster then doing them one by one using
+ * functions smp_hash_lookup and smp_hash_insert
+ */
 void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, void **values);
 
+/**
+ * locking_hash_lookup: Lookup key/value pair in hash table
+ * @hash_table: pointer to the hash table structure
+ * @client_id: client id to use to communicate with hash table servers
+ * @key: hash key to lookup value for
+ * @return: pointer to hash_value structure holding value, or NULL if there
+ * was no entry in hash table with given key
+ *
+ * locking_hash_lookup does look up in a hash without using hash servers or clients,
+ * but instead using locks on partitions.
+ * This function must not be called when hash servers are running.
+ */
 void * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
+
+/**
+ * locking_hash_insert: Insert key/value pair in hash table
+ * @hash_table: pointer to the hash table structure
+ * @client_id: client id to use to communicate with hash table servers
+ * @key: hash key
+ * @value: pointer to the value
+ *
+ * locking_hash_insert does insert in a hash without using hash servers or clients,
+ * but instead using locks on partitions.
+ * This function must not be called when hash servers are running.
+ */
 void locking_hash_insert(struct hash_table *hash_table, hash_key key, void *value);
 
+/**
+ * stats_get_nhits: Get total number of hash requests that were hits
+ */
 int stats_get_nhits(struct hash_table *hash_table);
+
+/**
+ * stats_get_overhead: Returns total memory in bytes that is used to
+ * store hash table structures
+ */
 size_t stats_get_overhead(struct hash_table *hash_table);
 
 #endif

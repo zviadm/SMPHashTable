@@ -490,38 +490,3 @@ size_t stats_get_overhead(struct hash_table *hash_table)
   return hash_table->overhead;
 }
 
-/**
- * hash_value structure memroy management functions
- */
-/*
-struct hash_value * server_alloc_hash_value(struct localmem *mem, size_t size, const char *data)
-{
-  struct hash_value *value = (struct hash_value *)localmem_alloc(mem, sizeof(struct hash_value) + size);
-  if (value != NULL) {
-    value->ref_count = 1;
-    value->mem = mem;
-    value->size = size;
-    memcpy(value->data, data, size);
-  }
-  return value;
-}
-
-void server_release_hash_value(struct hash_value *value)
-{
-  if (__sync_sub_and_fetch(&value->ref_count, 1) == 0) {
-    localmem_free(value->mem, value);
-  }
-}
-
-void retain_hash_value(struct hash_value *value)
-{
-  __sync_add_and_fetch(&value->ref_count, 1);
-}
-
-void release_hash_value(struct hash_value *value)
-{
-  if (__sync_sub_and_fetch(&value->ref_count, 1) == 0) {
-    localmem_async_free(value->mem, value);
-  }
-}
-*/
