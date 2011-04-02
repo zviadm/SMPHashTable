@@ -12,13 +12,13 @@ void buffer_write(struct onewaybuffer* buffer, unsigned long data)
   }
 
   buffer->data[buffer->tmp_wr_index & (ONEWAY_BUFFER_SIZE - 1)] = data;
-  ++buffer->tmp_wr_index;
+  buffer->tmp_wr_index++;
   if (buffer->tmp_wr_index >= buffer->wr_index + BUFFER_FLUSH_COUNT) {
     buffer_flush(buffer);
   }
 }
 
-void buffer_write_all(struct onewaybuffer* buffer, int write_count, const unsigned long* data) 
+void buffer_write_all(struct onewaybuffer* buffer, int write_count, const unsigned long* data, int force_flush) 
 {
   assert(write_count <= ONEWAY_BUFFER_SIZE);
   // wait till there is space in buffer
@@ -30,7 +30,9 @@ void buffer_write_all(struct onewaybuffer* buffer, int write_count, const unsign
     buffer->data[(buffer->tmp_wr_index + i) & (ONEWAY_BUFFER_SIZE - 1)] = data[i];
   }
   buffer->tmp_wr_index += write_count;
-  buffer_flush(buffer);
+  if (force_flush || (buffer->tmp_wr_index >= buffer->wr_index + BUFFER_FLUSH_COUNT)) {
+    buffer_flush(buffer);
+  }
 }
 
 void buffer_flush(struct onewaybuffer* buffer)

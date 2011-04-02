@@ -7,7 +7,6 @@
 #include <xmmintrin.h>
 
 #include "alock.h"
-#include "localmem.h"
 #include "onewaybuffer.h"
 #include "smphashtable.h"
 #include "util.h"
@@ -17,7 +16,7 @@
 #define SERVER_READ_COUNT BUFFER_FLUSH_COUNT 
 #define ELEM_OVERHEAD     (sizeof(hash_key) + sizeof(struct hash_value))
 #define HASH_INSERT_MASK  0x8000000000000000 
-#define INSERT_MSG_LENGTH 3
+#define INSERT_MSG_LENGTH 2
 
 /**
  * Hash Table Storage Data Structures
@@ -27,7 +26,7 @@
  */
 struct elem {
   hash_key key;
-  struct hash_value *value;
+  void *value;
   TAILQ_ENTRY(elem) chain;
   TAILQ_ENTRY(elem) lru;
   TAILQ_ENTRY(elem) free;
@@ -41,9 +40,9 @@ struct partition {
   struct bucket *table;
   TAILQ_HEAD(lrulist, elem) lru;
   TAILQ_HEAD(freelist, elem) free;
+  int max_size;
   int nhash;
-  //size_t size;
-  size_t max_size;
+  int size;
   int nhits;
   struct elem *elems;
   struct alock lock;
@@ -71,7 +70,7 @@ struct thread_args {
 struct hash_table {
   int nservers;
   volatile int nclients;
-  size_t max_size;
+  int max_size;
   size_t overhead;
 
   pthread_mutex_t create_client_lock;
@@ -84,20 +83,15 @@ struct hash_table {
   struct box_array *boxes;
 };
 
-struct hash_value static_value;
-
 // Forward declaration of functions
 void init_hash_partition(struct hash_table *hash_table, struct partition *p);
 void destroy_hash_partition(struct partition *p);
 void *hash_table_server(void* args);
 
 struct elem * hash_lookup(struct partition *p, hash_key key);
-struct elem * hash_insert(struct partition *p, hash_key key, size_t size, const char* data);
+struct elem * hash_insert(struct partition *p, hash_key key, void *value);
 void hash_remove(struct partition *p, struct elem *e);
 void lru(struct partition *p, struct elem *e);
-
-struct hash_value * server_alloc_hash_value(struct localmem *mem, size_t size, const char *data);
-void server_release_hash_value(struct hash_value *value);
 
 /**
  * Hash Distribution functions
@@ -112,10 +106,8 @@ static inline int hash_get_bucket(const struct partition *p, hash_key key)
   return key % p->nhash;
 }
 
-struct hash_table *create_hash_table(size_t max_size, int nservers) 
+struct hash_table *create_hash_table(int max_size, int nservers) 
 {
-  static_value.size = 8;
-
   struct hash_table *hash_table = (struct hash_table *)malloc(sizeof(struct hash_table));
   hash_table->nservers = nservers;
   hash_table->nclients = 0;
@@ -161,11 +153,10 @@ void init_hash_partition(struct hash_table *hash_table, struct partition *p)
 {
   assert((unsigned long)p % CACHELINE == 0);
   p->max_size = hash_table->max_size / hash_table->nservers;
-  const unsigned int nelems = max(10, p->max_size / (2 * CACHELINE));
-  p->nhash = max(10, nelems / BUCKET_LOAD);
+  p->nhash = max(10, p->max_size / BUCKET_LOAD);
   p->nhits = 0;
-  //p->size = 0;
-  hash_table->overhead += p->nhash * sizeof(struct bucket) + nelems * sizeof(struct elem);
+  p->size = 0;
+  hash_table->overhead += p->nhash * sizeof(struct bucket) + p->max_size * sizeof(struct elem);
 
   p->table = memalign(CACHELINE, p->nhash * sizeof(struct bucket));
   assert((unsigned long) &(p->table[0]) % CACHELINE == 0);
@@ -175,27 +166,19 @@ void init_hash_partition(struct hash_table *hash_table, struct partition *p)
 
   TAILQ_INIT(&p->lru);
   TAILQ_INIT(&p->free);
-  p->elems = memalign(CACHELINE, nelems * sizeof(struct elem));
-  for (int i = 0; i < nelems; i++) {
+  p->elems = memalign(CACHELINE, p->max_size * sizeof(struct elem));
+  for (int i = 0; i < p->max_size; i++) {
     struct elem *e = &p->elems[i];
     TAILQ_INSERT_TAIL(&p->free, e, free);
   }
 
   anderson_init(&p->lock, hash_table->nservers);
-  localmem_init(&p->mem, p->max_size);
 }
 
 void destroy_hash_partition(struct partition *p)
 {
-  struct lrulist *eh = &p->lru;
-  struct elem *e = TAILQ_FIRST(eh);
-  while (e != NULL) {
-    server_release_hash_value(e->value);
-    e = TAILQ_NEXT(e, lru);
-  }
   free(p->table);
   free(p->elems); 
-  localmem_destroy(&p->mem);
 }
 
 void start_hash_table_servers(struct hash_table *hash_table, int first_core) 
@@ -257,8 +240,6 @@ void *hash_table_server(void* args)
   int quitting = 0;
 
   set_affinity(c);
-  int avg_count = 0;
-  int reqs = 0;
   while (quitting == 0) {
     // after server receives quit signal it should make sure to complete all 
     // queries that are in the buffers
@@ -268,9 +249,6 @@ void *hash_table_server(void* args)
     for (int i = 0; i < nclients; i++) {
       int count = buffer_read_all(&boxes[i].boxes[s].in, (quitting == 0) ? SERVER_READ_COUNT : ONEWAY_BUFFER_SIZE, localbuf);
       if (count == 0) continue;
-
-      avg_count += count;
-      reqs++;
 
       int k = 0;
       int j = 0;
@@ -283,15 +261,14 @@ void *hash_table_server(void* args)
             assert(tmpcnt == k + INSERT_MSG_LENGTH - count);
           }
             
-          hash_insert(p, localbuf[k] & (HASH_INSERT_MASK - 1), (size_t)localbuf[k + 1], (const char*)localbuf[k + 2]); 
-          localbuf[j] = 0;
+          hash_insert(p, localbuf[k] & (HASH_INSERT_MASK - 1), (void *)localbuf[k + 1]);
+          localbuf[j] = 0; // TODO: it could return element that was evicted or something like that
           j++;
-          k += 3;
+          k += INSERT_MSG_LENGTH;
         } else {
           struct elem *e = hash_lookup(p, localbuf[k]);
           if (e != NULL) {
             localbuf[j] = (unsigned long)e->value;
-            retain_hash_value(e->value);
           } else {
             localbuf[j] = 0;
           }
@@ -300,42 +277,40 @@ void *hash_table_server(void* args)
         }
       }
 
-      buffer_write_all(&boxes[i].boxes[s].out, j, localbuf);
+      buffer_write_all(&boxes[i].boxes[s].out, j, localbuf, 1);
     }
   }
-  //printf("%d %d %d %.3f\n", s, avg_count, reqs, (double)avg_count / reqs);
   return 0;
 }
 
-struct hash_value * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key)
+void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key)
 {
   unsigned long res;
   int s = hash_get_server(hash_table, key);
-  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 1, (unsigned long*)&key);
+  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 1, (unsigned long*)&key, 1);
 
   while (buffer_read_all(&hash_table->boxes[client_id].boxes[s].out, 1, &res) == 0) {
     _mm_pause();
   }
-  return (struct hash_value *)res;
+  return (void *)res;
 }
 
-void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, size_t size, const char *data)
+void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, void *value)
 {
   unsigned long res;
   unsigned long msg_data[INSERT_MSG_LENGTH];
   msg_data[0] = (unsigned long)key | HASH_INSERT_MASK;
-  msg_data[1] = (unsigned long)size;
-  msg_data[2] = (unsigned long)data;
+  msg_data[1] = (unsigned long)value;
 
   int s = hash_get_server(hash_table, key);
-  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data);
+  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data, 1);
   while (buffer_read_all(&hash_table->boxes[client_id].boxes[s].out, 1, &res) == 0) {
     _mm_pause();
   }
   assert(res == 0);
 }
 
-void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, struct hash_value **values)
+void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, void **values)
 {
   int pindex = 0;
 
@@ -371,7 +346,7 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
         localbuf_size[ps] = count;
       }
 
-      values[pindex] = (struct hash_value *)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
+      values[pindex] = (void *)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
       pindex++;
       localbuf_index[ps]++;
     }
@@ -380,9 +355,8 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
       buffer_write(&boxes[client_id].boxes[s].in, queries[i].key);
     } else {
       msg_data[0] = (unsigned long)queries[i].key | HASH_INSERT_MASK;
-      msg_data[1] = (unsigned long)queries[i].size;
-      msg_data[2] = (unsigned long)queries[i].data;
-      buffer_write_all(&boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data);
+      msg_data[1] = (unsigned long)queries[i].value;
+      buffer_write_all(&boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data, 0);
     }
     pending_count[s]++;
   }
@@ -404,7 +378,7 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
       localbuf_size[ps] = count;
     }
 
-    values[pindex] = (struct hash_value *)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
+    values[pindex] = (void *)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
     pindex++;
     localbuf_index[ps]++;
   }
@@ -415,27 +389,26 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
   free(localbuf);
 }
 
-struct hash_value * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
+void * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
 {
   int s = hash_get_server(hash_table, key);
-  struct hash_value *value = NULL;
+  void *value = NULL;
   int extra;
   anderson_acquire(&hash_table->partitions[s].lock, &extra);
   struct elem *e = hash_lookup(&hash_table->partitions[s], key);
   if (e != NULL) {
     value = e->value;
-    retain_hash_value(e->value);
   }
   anderson_release(&hash_table->partitions[s].lock, &extra);
   return value;
 }
 
-void locking_hash_insert(struct hash_table *hash_table, hash_key key, size_t size, char *data)
+void locking_hash_insert(struct hash_table *hash_table, hash_key key, void *value)
 {
   int s = hash_get_server(hash_table, key);
   int extra;
   anderson_acquire(&hash_table->partitions[s].lock, &extra);
-  hash_insert(&hash_table->partitions[s], key, size, data);
+  hash_insert(&hash_table->partitions[s], key, value);
   anderson_release(&hash_table->partitions[s].lock, &extra);
 }
 
@@ -457,35 +430,16 @@ struct elem * hash_lookup(struct partition *p, hash_key key)
   return NULL;
 }
 
-struct elem * hash_insert(struct partition *p, hash_key key, size_t size, const char *data)
+struct elem * hash_insert(struct partition *p, hash_key key, void *value)
 {
   struct elist *eh = &(p->table[hash_get_bucket(p, key)].chain);
   struct elem *e = hash_lookup(p, key);
 
-  if (e != NULL) {
-    server_release_hash_value(e->value);
-  } else if (TAILQ_FIRST(&p->free) == NULL) {
+  if (e == NULL && p->size == p->max_size) {
     struct elem *l = TAILQ_LAST(&p->lru, lrulist);
     assert(l);
     hash_remove(p, l);
   }
-
-  struct hash_value *value;
-  while ((value = server_alloc_hash_value(&p->mem, size, data)) == NULL) {
-    struct elem *l = TAILQ_LAST(&p->lru, lrulist);
-    if (l == NULL) {
-      // there is no space in hash table
-      printf("DEBUG:: THERE IS NO MORE SPACE IN HASH TABLE \n");
-      if (e != NULL) {
-        TAILQ_REMOVE(eh, e, chain);
-        TAILQ_REMOVE(&p->lru, e, lru);
-        TAILQ_INSERT_TAIL(&p->free, e, free);
-      } 
-      return NULL;
-    }
-    
-    hash_remove(p, l);
-  } 
 
   if (e == NULL) {
     e = TAILQ_FIRST(&p->free);
@@ -493,6 +447,8 @@ struct elem * hash_insert(struct partition *p, hash_key key, size_t size, const 
     TAILQ_REMOVE(&p->free, e, free);
     TAILQ_INSERT_TAIL(eh, e, chain);
     TAILQ_INSERT_HEAD(&p->lru, e, lru);
+    p->size++;
+    assert(p->size <= p->max_size);
   }
 
   e->key = key;
@@ -505,7 +461,8 @@ void hash_remove(struct partition *p, struct elem *e)
   struct elist *eh = &(p->table[hash_get_bucket(p, e->key)].chain);
   TAILQ_REMOVE(eh, e, chain);
   TAILQ_REMOVE(&p->lru, e, lru);
-  server_release_hash_value(e->value);
+  p->size--;
+  assert(p->size >= 0);
   TAILQ_INSERT_TAIL(&p->free, e, free);
 }
 
@@ -536,6 +493,7 @@ size_t stats_get_overhead(struct hash_table *hash_table)
 /**
  * hash_value structure memroy management functions
  */
+/*
 struct hash_value * server_alloc_hash_value(struct localmem *mem, size_t size, const char *data)
 {
   struct hash_value *value = (struct hash_value *)localmem_alloc(mem, sizeof(struct hash_value) + size);
@@ -566,4 +524,4 @@ void release_hash_value(struct hash_value *value)
     localmem_async_free(value->mem, value);
   }
 }
-
+*/

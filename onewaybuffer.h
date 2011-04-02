@@ -17,7 +17,7 @@ struct onewaybuffer {
 } __attribute__ ((aligned (CACHELINE)));
 
 void buffer_write(struct onewaybuffer* buffer, unsigned long data);
-void buffer_write_all(struct onewaybuffer* buffer, int write_count, const unsigned long* data);
+void buffer_write_all(struct onewaybuffer* buffer, int write_count, const unsigned long* data, int force_flush);
 void buffer_flush(struct onewaybuffer* buffer);
 int buffer_read_all(struct onewaybuffer* buffer, int max_read_count, unsigned long* data);
 

@@ -10,31 +10,30 @@
 typedef long hash_key;
 
 /**
+ * struct hash_query - Hash table query
+ * @optype: 0 - lookup, 1 - insert
+ * @key: key to lookup or insert
+ * @value: pointer to the value
+ */
+struct hash_query {
+  int optype;
+  hash_key key;
+  void *value;
+};
+
+/**
  * struct hash_value - Hash table value type
  * @ref_count: reference count
  * @size: size of data
  * @data: object data
- */
+ *//*
 struct hash_value {
   int ref_count;
   struct localmem *mem;
   size_t size;
   char data[0];
 } __attribute__ ((aligned (CACHELINE)));
-
-/**
- * struct hash_query - Hash table query
- * @optype: 0 - lookup, 1 - insert
- * @key: key to lookup or insert
- * @size: size of data to insert
- * @data: pointer to data
- */
-struct hash_query {
-  int optype;
-  hash_key key;
-  size_t size;
-  char *data;
-};
+*/
 
 /**
  * struct hash_table
@@ -47,7 +46,7 @@ struct hash_table;
  * @nservers: number of servers that serve hash content
  * @return: pointer to the created hash table
  */
-struct hash_table *create_hash_table(size_t max_size, int nservers); 
+struct hash_table *create_hash_table(int max_size, int nservers); 
 
 /**
  * destroy_hash_table - Destroy smp hash table
@@ -89,27 +88,23 @@ int create_hash_table_client(struct hash_table *hash_table);
  * after done using value, release_hash_value must be called to release
  * hash_value object
  */ 
-struct hash_value * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key);
+void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key);
 
 /**
  * smp_hash_insert: Insert key/value pair in hash table
  * @hash_table: pointer to the hash table structure
  * @client_id: client id to use to communicate with hash table servers
  * @key: hash key
- * @size: size of data
- * @data: pointer to data
+ * @value: pointer to the value
  */
-void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, size_t size, const char *data);
+void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, void *value);
 
-void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, struct hash_value **values);
+void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, void **values);
 
-struct hash_value * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
-void locking_hash_insert(struct hash_table *hash_table, hash_key key, size_t size, char *data);
+void * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
+void locking_hash_insert(struct hash_table *hash_table, hash_key key, void *value);
 
 int stats_get_nhits(struct hash_table *hash_table);
 size_t stats_get_overhead(struct hash_table *hash_table);
-
-void retain_hash_value(struct hash_value *value);
-void release_hash_value(struct hash_value *value); 
 
 #endif

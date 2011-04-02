@@ -177,13 +177,16 @@ void get_random_query(int client_id, struct hash_query *query)
   query->optype = optype;
   query->key = r & query_mask;
   if (optype == 1) {
-    query->size = 8;
-    query->data = rand_data;
+    unsigned long v1 = rand_r(&cdata[client_id].seed);
+    unsigned long v2 = rand_r(&cdata[client_id].seed);
+    unsigned long v = ((v1 << 16) + v2);
+    query->value = (void *)v;
   }
 }
 
 void * client_design1(void *args)
 {
+  /*
   int c = *(int *)args;
   set_affinity(c);
   
@@ -201,11 +204,13 @@ void * client_design1(void *args)
       smp_hash_insert(hash_table, cid, query.key, query.size, query.data);
     }
   }
+  */
   return NULL;
 }
 
 void * client_design2(void *args)
 {
+  /*
   int c = *(int *)args;
   set_affinity(c);
   
@@ -226,11 +231,13 @@ void * client_design2(void *args)
 
     i += nqueries;
   }
+  */
   return NULL;
 }
 
 void * client_design3(void *args)
 {
+  /*
   int c = *(int *)args;
   set_affinity(c);
   
@@ -246,6 +253,7 @@ void * client_design3(void *args)
       locking_hash_insert(hash_table, query.key, query.size, query.data);
     }
   }
+  */
   return NULL;
 }
 
