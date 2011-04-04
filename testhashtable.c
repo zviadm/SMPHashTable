@@ -17,7 +17,6 @@ static inline void insert(struct hash_table *table, int use_locking, int c, hash
   assert(value != NULL);
   *(long *)value = val;
   localmem_mark_ready(value);
-  localmem_async_release(value);
 }
 
 static inline long lookup(struct hash_table *table, int use_locking, int c, hash_key key)
@@ -201,22 +200,23 @@ void test4()
   }
 
   printf("Performing All Queries...\n");
-  void * values[2 * nqueries];
-  smp_hash_doall(table, c, 2 * nqueries, queries, values);
+  void * values[nqueries];
+  smp_hash_doall(table, c, nqueries, queries, values);
 
   // write all values
   for (int i = 0; i < nqueries; i++) {
     assert(values[i] != NULL);
     *(long *)values[i] = i;
     localmem_mark_ready(values[i]);
-    localmem_async_release(values[i]);
   }
 
+  smp_hash_doall(table, c, nqueries, &queries[nqueries], values);
+
   printf("Checking All Values...\n");
-  for (int i = nqueries; i < 2 * nqueries; i++) {
+  for (int i = 0; i < nqueries; i++) {
     assert(values[i] != NULL);
     assert(localmem_is_ready(values[i]));
-    assert(*(long*)values[i] == i - nqueries);
+    assert(*(long*)values[i] == i);
     localmem_async_release(values[i]);
   }
 

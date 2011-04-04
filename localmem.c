@@ -9,7 +9,7 @@
 #include "localmem.h"
 #include "util.h"
 
-// #define MM_CHECK // uncomment for runtime checking (super slow)
+//#define MM_CHECK // uncomment for runtime checking (super slow)
 
 /* All blocks must be allocated on double-word boundaries. */
 #define ALIGNMENT CACHELINE
@@ -27,7 +27,8 @@
 #define MAX_BRUTE_SEARCH 10
 
 /* Until first write, newly allocated block is not ready */
-#define DATA_READY_MASK 0x80000000
+#define UNUSED_BLOCK_REFCOUNT 0x8000000000000000
+#define DATA_READY_MASK       0x80000000
 
 struct mem_block {
   volatile size_t size;
@@ -87,10 +88,6 @@ inline void set_block_size(mem_block_t block, size_t size)
   *(size_t *)((unsigned long)block + size - sizeof(size_t)) = size;
 }
 
-inline size_t get_data_size(mem_block_t block) {
-  return block->size - BLOCK_HEADER_SIZE;
-}
-
 inline mem_block_t get_block_from_data_ptr(void* ptr)
 {
   return 
@@ -133,7 +130,7 @@ void unlink_block(struct localmem *mem, mem_block_t block)
 mem_block_t get_adjacent_prev(struct localmem *mem, mem_block_t block)
 {
   if ((void*)block == mem->startaddr) return NULL;
- 
+  
   size_t prev_block_size = *(size_t *)((unsigned long)block - sizeof(size_t));
   return (mem_block_t)((unsigned long)block - prev_block_size);
 }
@@ -169,11 +166,12 @@ void localmem_init(struct localmem *mem, size_t size)
 void localmem_destroy(struct localmem *mem) 
 {
   localmem_free_all(mem);
-#ifdef MM_CHECK
+
   // make sure all blocks are free at the end
   if ((((mem_block_t)mem->startaddr)->size != (mem->endaddr - mem->startaddr)) ||
       (((mem_block_t)mem->startaddr)->ref_count != 0)) {
     printf("LOCALMEM ERROR: not all blocks were freed\n");
+#ifdef MM_CHECK
     printf("Async free list: %p\n", mem->async_free_list);
     mem_block_t block = (mem_block_t)(mem->startaddr);
     while (block != 0) {
@@ -181,8 +179,9 @@ void localmem_destroy(struct localmem *mem)
       block = get_adjacent_next(mem, block);
     }
     printf("%zu - %zu\n", ((mem_block_t)mem->startaddr)->size, (mem->endaddr - mem->startaddr));
-  }
 #endif
+  }
+
   free(mem->startaddr);
 }
 
@@ -240,7 +239,7 @@ void* localmem_alloc(struct localmem *mem, size_t size)
   }
 
   dst->mem = mem;
-  dst->ref_count = DATA_READY_MASK | 1; // put the block in use
+  dst->ref_count = UNUSED_BLOCK_REFCOUNT | DATA_READY_MASK | 1; // put the block in use
 #ifdef MM_CHECK
   mm_check(mem);
 #endif
@@ -302,7 +301,7 @@ void localmem_free_all(struct localmem *mem)
 
   mem_block_t block = __sync_fetch_and_and(&mem->async_free_list, 0);
   while (block != NULL) {
-    mem_block_t next = block->list_next;
+    mem_block_t next = block->async_list_next;
     localmem_free(mem, (void *)block->data_ptr);
     block = next;
   }
@@ -321,8 +320,8 @@ void localmem_retain(void *ptr)
 void localmem_release(void *ptr)
 {
   mem_block_t block = get_block_from_data_ptr(ptr);
-  int ref_count = __sync_sub_and_fetch(&(block->ref_count), 1);
-  if (ref_count == 0) {
+  unsigned long ref_count = __sync_sub_and_fetch(&(block->ref_count), 1);
+  if (ref_count == UNUSED_BLOCK_REFCOUNT) {
     localmem_free(block->mem, ptr);
   }
 }
@@ -330,8 +329,8 @@ void localmem_release(void *ptr)
 void localmem_async_release(void *ptr)
 {
   mem_block_t block = get_block_from_data_ptr(ptr);
-  int ref_count = __sync_sub_and_fetch(&(block->ref_count), 1);
-  if (ref_count == 0) {
+  unsigned long ref_count = __sync_sub_and_fetch(&(block->ref_count), 1);
+  if (ref_count == UNUSED_BLOCK_REFCOUNT) {
     localmem_async_free(block->mem, ptr);
   }
 }
@@ -339,7 +338,10 @@ void localmem_async_release(void *ptr)
 void localmem_mark_ready(void *ptr)
 {
   mem_block_t block = get_block_from_data_ptr(ptr);
-  __sync_and_and_fetch(&(block->ref_count), DATA_READY_MASK - 1);   
+  unsigned long ref_count = __sync_and_and_fetch(&(block->ref_count), UNUSED_BLOCK_REFCOUNT | (DATA_READY_MASK - 1));
+  if (ref_count == UNUSED_BLOCK_REFCOUNT) {
+    localmem_async_free(block->mem, ptr);
+  }
 }
 
 int localmem_is_ready(void *ptr)
@@ -384,22 +386,27 @@ int mm_check_heap(struct localmem *mem) {
   mem_block_t block_ptr = (mem_block_t)mem->startaddr;
   mem_block_t end_ptr = (mem_block_t)(mem->endaddr);
   //unsigned int cur_size;
-  //int last_block_free = 0;
+  int last_block_free = 0;
   while (block_ptr < end_ptr) {
     if ((unsigned long)block_ptr & (ALIGNMENT - 1)) {
       mm_check_err_msg(block_ptr, "Block not aligned to predefined ALIGNMENT.");
       return 0;
     }
-    /*
+
+    if (*(size_t *)((unsigned long)block_ptr + block_ptr->size - sizeof(size_t)) != 
+        block_ptr->size) {
+      mm_check_err_msg(block_ptr, "Block size at the end of block is invalid.");
+      return 0;
+    }
+
     int cur_block_free = block_ptr->ref_count == 0;
     if (last_block_free && cur_block_free) { // we have two contiguous free blocks
       mm_check_err_msg(block_ptr, "Two consecutive free blocks (this and the previous block)");
       return 0;
     }
-    cur_size = get_block_size(block_ptr);
-    int msb = get_bin_from_size(cur_size);
+    int msb = get_bin_from_size(block_ptr->size);
     // check if this thing is in the free list
-    size_t* free_list_ptr = mem->bins[msb];
+    mem_block_t free_list_ptr = mem->bins[msb];
     int found = 0;
     while (free_list_ptr != 0) {
       if (free_list_ptr == block_ptr) {
@@ -411,14 +418,13 @@ int mm_check_heap(struct localmem *mem) {
           return 0;
         }
       }
-      free_list_ptr = get_link_next(free_list_ptr);
+      free_list_ptr = free_list_ptr->list_next;
     }
     if (!found && cur_block_free) {
       mm_check_err_msg(block_ptr, "Block is marked as free but not in the free list");
       return 0;
     }
     last_block_free = cur_block_free;
-    */
     block_ptr = (mem_block_t)((unsigned long)block_ptr + block_ptr->size);
   }
 

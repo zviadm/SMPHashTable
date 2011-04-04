@@ -265,7 +265,10 @@ void *hash_table_server(void* args)
       int k = 0;
       int j = 0;
       struct elem *e;
+      unsigned long value;
       while (k < count) {
+        value = 0;
+
         if (localbuf[k] & HASH_INSERT_MASK) {
           if (k + INSERT_MSG_LENGTH > count) {
             // handle scenario when hash insert message gets cut off 
@@ -275,18 +278,18 @@ void *hash_table_server(void* args)
           }
             
           e = hash_insert(p, localbuf[k] & (HASH_INSERT_MASK - 1), localbuf[k + 1]);
+          if (e != NULL) value = (unsigned long)e->value;
           k += INSERT_MSG_LENGTH;
         } else {
           e = hash_lookup(p, localbuf[k]);
+          if ((e != NULL) && localmem_is_ready(e->value)) {
+            value = (unsigned long)e->value;
+            localmem_retain(e->value);
+          }
           k++;
         }
 
-        if (e != NULL) {
-          localbuf[j] = (unsigned long)e->value;
-          localmem_retain(e->value);
-        } else {
-          localbuf[j] = 0;
-        }
+        localbuf[j] = value;
         j++;
       }
 
@@ -409,7 +412,7 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
   int extra;
   anderson_acquire(&hash_table->partitions[s].lock, &extra);
   struct elem *e = hash_lookup(&hash_table->partitions[s], key);
-  if (e != NULL) {
+  if (e != NULL && localmem_is_ready(e->value)) {
     value = e->value;
     localmem_retain(e->value);
   }
@@ -426,7 +429,6 @@ void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size
   struct elem *e = hash_insert(&hash_table->partitions[s], key, size);
   if (e != NULL) {
     value = e->value;
-    localmem_retain(e->value);
   }
   anderson_release(&hash_table->partitions[s].lock, &extra);
   return value;

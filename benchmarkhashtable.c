@@ -212,17 +212,13 @@ void * client_design1(void *args)
     if (query.optype == 0) {
       value = smp_hash_lookup(hash_table, cid, query.key);
       if (value != NULL) {
-        while (localmem_is_ready(value) == 0) {
-          _mm_pause();
-        }
         assert(*(long *)value == query.key);
-        localmem_release(value);
+        localmem_async_release(value);
       }
     } else {
       value = smp_hash_insert(hash_table, cid, query.key, query.size);
       *(long*)value = query.key;
       localmem_mark_ready(value);
-      localmem_release(value);
     }
   }
   return NULL;
@@ -244,20 +240,17 @@ void * client_design2(void *args)
       get_random_query(c, &queries[k]);
     }
     smp_hash_doall(hash_table, cid, nqueries, queries, values);
+
     for (int k = 0; k < nqueries; k++) {
       if (queries[k].optype == 0) {
         if (values[k] != NULL) {
-          while (localmem_is_ready(values[k]) == 0) {
-            _mm_pause();
-          }
           assert(*(long *)values[k] == queries[k].key);
-          localmem_release(values[k]);
+          localmem_async_release(values[k]);
         }
       } else {
         assert(values[k] != NULL);
-        *(long *)values[k] = queries[k].key;
+        *((long *)(values[k])) = queries[k].key;
         localmem_mark_ready(values[k]);
-        localmem_release(values[k]);
       }
     }
     i += nqueries;
@@ -281,17 +274,13 @@ void * client_design3(void *args)
     if (query.optype == 0) {
       value = locking_hash_lookup(hash_table, query.key);
       if (value != NULL) {
-        while (localmem_is_ready(value) == 0) {
-          _mm_pause();
-        }
         assert(*(long *)value == query.key);
-        localmem_release(value);
+        localmem_async_release(value);
       }
     } else {
       value = locking_hash_insert(hash_table, query.key, query.size);
       *(long*)value = query.key;
       localmem_mark_ready(value);
-      localmem_release(value);
     }
   }
   return NULL;
