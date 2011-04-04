@@ -5,15 +5,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <xmmintrin.h>
 
 #include "ia32perf.h"
+#include "localmem.h"
 #include "smphashtable.h"
 #include "util.h"
 
 int nservers        = 1;
 int nclients        = 1;
 int niters          = 1000000;
-int size            = 1000000;
+int nelems          = 1000000;
+size_t size         = 1000000;
 int query_mask      = 0xFFFFF;
 int write_threshold = (0.3f * (double)RAND_MAX);
 int design          = 1;
@@ -47,6 +50,7 @@ int main(int argc, char *argv[])
    * @c: number of clients
    * @i: number of iterations
    * @n: number of elements in cache
+   * @t: maximum size of cache
    * @m: log of query mask
    * @w: hash inserts / iterations
    * @d: hash design to use
@@ -56,7 +60,7 @@ int main(int argc, char *argv[])
    * @f: first server core number 
    *
    */
-  while((opt_char = getopt(argc, argv, "s:c:i:n:m:w:d:f:b:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:c:i:n:t:m:w:d:f:b:")) != -1) {
     switch (opt_char) {
       case 's':
         nservers = atoi(optarg);
@@ -68,6 +72,9 @@ int main(int argc, char *argv[])
         niters = atoi(optarg);
         break;
       case 'n':
+        nelems = atoi(optarg);
+        break;
+      case 't':
         size = atol(optarg);
         break;
       case 'm':
@@ -100,7 +107,7 @@ void run_benchmark()
 {
   srand(19890811);
 
-  hash_table = create_hash_table(size, nservers);
+  hash_table = create_hash_table(size, nelems, nservers);
   cdata = malloc(nclients * sizeof(struct client_data));
   for (int i = 0; i < nclients; i++) {
     cdata[i].seed = rand();
@@ -180,10 +187,13 @@ void get_random_query(int client_id, struct hash_query *query)
   query->optype = optype;
   query->key = r & query_mask;
   if (optype == 1) {
+    query->size = 8;
+    /*
     unsigned long v1 = rand_r(&cdata[client_id].seed);
     unsigned long v2 = rand_r(&cdata[client_id].seed);
     unsigned long v = ((v1 << 16) + v2);
     query->value = (void *)v;
+    */
   }
 }
 
@@ -201,8 +211,18 @@ void * client_design1(void *args)
     get_random_query(c, &query);
     if (query.optype == 0) {
       value = smp_hash_lookup(hash_table, cid, query.key);
+      if (value != NULL) {
+        while (localmem_is_ready(value) == 0) {
+          _mm_pause();
+        }
+        assert(*(long *)value == query.key);
+        localmem_release(value);
+      }
     } else {
-      smp_hash_insert(hash_table, cid, query.key, query.value);
+      value = smp_hash_insert(hash_table, cid, query.key, query.size);
+      *(long*)value = query.key;
+      localmem_mark_ready(value);
+      localmem_release(value);
     }
   }
   return NULL;
@@ -224,6 +244,22 @@ void * client_design2(void *args)
       get_random_query(c, &queries[k]);
     }
     smp_hash_doall(hash_table, cid, nqueries, queries, values);
+    for (int k = 0; k < nqueries; k++) {
+      if (queries[k].optype == 0) {
+        if (values[k] != NULL) {
+          while (localmem_is_ready(values[k]) == 0) {
+            _mm_pause();
+          }
+          assert(*(long *)values[k] == queries[k].key);
+          localmem_release(values[k]);
+        }
+      } else {
+        assert(values[k] != NULL);
+        *(long *)values[k] = queries[k].key;
+        localmem_mark_ready(values[k]);
+        localmem_release(values[k]);
+      }
+    }
     i += nqueries;
   }
 
@@ -244,8 +280,18 @@ void * client_design3(void *args)
     get_random_query(c, &query);
     if (query.optype == 0) {
       value = locking_hash_lookup(hash_table, query.key);
+      if (value != NULL) {
+        while (localmem_is_ready(value) == 0) {
+          _mm_pause();
+        }
+        assert(*(long *)value == query.key);
+        localmem_release(value);
+      }
     } else {
-      locking_hash_insert(hash_table, query.key, query.value);
+      value = locking_hash_insert(hash_table, query.key, query.size);
+      *(long*)value = query.key;
+      localmem_mark_ready(value);
+      localmem_release(value);
     }
   }
   return NULL;

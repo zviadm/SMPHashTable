@@ -16,8 +16,8 @@ typedef long hash_key;
  */
 struct hash_query {
   int optype;
+  int size;
   hash_key key;
-  void *value;
 };
 
 /**
@@ -31,7 +31,7 @@ struct hash_table;
  * @nservers: number of servers that serve hash content
  * @return: pointer to the created hash table
  */
-struct hash_table *create_hash_table(int max_size, int nservers); 
+struct hash_table *create_hash_table(size_t max_size, int nelems, int nservers); 
 
 /**
  * destroy_hash_table - Destroy smp hash table
@@ -82,7 +82,7 @@ void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key ke
  * @key: hash key
  * @value: pointer to the value
  */
-void smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, void *value);
+void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, int size);
 
 /**
  * smp_hash_doall: Perform batch hash table queries
@@ -122,7 +122,7 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
  * but instead using locks on partitions.
  * This function must not be called when hash servers are running.
  */
-void locking_hash_insert(struct hash_table *hash_table, hash_key key, void *value);
+void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size);
 
 /**
  * stats_get_nhits: Get total number of hash requests that were hits
