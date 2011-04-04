@@ -114,9 +114,8 @@ void run_benchmark()
     // Event Select values for each pmc
     // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits)
     if (StartCounter(i, 0, 0x00610224) != 0) {
-      printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
-             " and are running benchmark with sudo privileges\n", i);
-      exit(1);
+      //printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
+      //       " and are running benchmark with sudo privileges\n", i);
     }
     ReadCounter(i, 0, &pmclast[i]);
   }

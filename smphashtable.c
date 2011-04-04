@@ -46,7 +46,6 @@ struct partition {
   int nhits;
   struct elem *elems;
   struct alock lock;
-  struct localmem mem;
 } __attribute__ ((aligned (CACHELINE)));
 
 /**
