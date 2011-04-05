@@ -213,7 +213,7 @@ void * client_design1(void *args)
       value = smp_hash_lookup(hash_table, cid, query.key);
       if (value != NULL) {
         assert(*(long *)value == query.key);
-        localmem_async_release(value);
+        localmem_release(value, 1);
       }
     } else {
       value = smp_hash_insert(hash_table, cid, query.key, query.size);
@@ -245,7 +245,7 @@ void * client_design2(void *args)
       if (queries[k].optype == 0) {
         if (values[k] != NULL) {
           assert(*(long *)values[k] == queries[k].key);
-          localmem_async_release(values[k]);
+          localmem_release(values[k], 1);
         }
       } else {
         assert(values[k] != NULL);
@@ -275,7 +275,7 @@ void * client_design3(void *args)
       value = locking_hash_lookup(hash_table, query.key);
       if (value != NULL) {
         assert(*(long *)value == query.key);
-        localmem_async_release(value);
+        localmem_release(value, 1);
       }
     } else {
       value = locking_hash_insert(hash_table, query.key, query.size);

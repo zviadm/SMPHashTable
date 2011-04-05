@@ -9,8 +9,6 @@
 #include "localmem.h"
 #include "util.h"
 
-//#define MM_CHECK // uncomment for runtime checking (super slow)
-
 /* All blocks must be allocated on double-word boundaries. */
 #define ALIGNMENT CACHELINE
 
@@ -28,7 +26,7 @@
 
 /* Until first write, newly allocated block is not ready */
 #define UNUSED_BLOCK_REFCOUNT 0x8000000000000000
-#define DATA_READY_MASK       0x80000000
+#define DATA_READY_MASK       0x4000000000000000
 
 struct mem_block {
   volatile size_t size;
@@ -148,7 +146,7 @@ mem_block_t get_adjacent_next(struct localmem *mem, mem_block_t block)
 
 // Forward Declarations
 void localmem_free_all(struct localmem *mem);
-int mm_check(struct localmem *mem);
+static inline void mm_check(struct localmem *mem);
 
 void localmem_init(struct localmem *mem, size_t size) 
 {
@@ -168,28 +166,15 @@ void localmem_destroy(struct localmem *mem)
   localmem_free_all(mem);
 
   // make sure all blocks are free at the end
-  if ((((mem_block_t)mem->startaddr)->size != (mem->endaddr - mem->startaddr)) ||
-      (((mem_block_t)mem->startaddr)->ref_count != 0)) {
-    printf("LOCALMEM ERROR: not all blocks were freed\n");
-#ifdef MM_CHECK
-    printf("Async free list: %p\n", mem->async_free_list);
-    mem_block_t block = (mem_block_t)(mem->startaddr);
-    while (block != 0) {
-      printf("%p, %zu, %lu\n", block, block->size, block->ref_count); 
-      block = get_adjacent_next(mem, block);
-    }
-    printf("%zu - %zu\n", ((mem_block_t)mem->startaddr)->size, (mem->endaddr - mem->startaddr));
-#endif
-  }
+  assert(((mem_block_t)mem->startaddr)->size == (mem->endaddr - mem->startaddr));
+  assert(((mem_block_t)mem->startaddr)->ref_count == 0);
 
   free(mem->startaddr);
 }
 
 void* localmem_alloc(struct localmem *mem, size_t size) 
 {
-#ifdef MM_CHECK
   mm_check(mem);
-#endif
 
   // perform all pending asynchrnous free operations
   if (mem->async_free_list != NULL) localmem_free_all(mem);
@@ -201,7 +186,7 @@ void* localmem_alloc(struct localmem *mem, size_t size)
   // if aligned_size block exists or not
   int cnt = 1;
   mem_block_t dst = mem->bins[bin_index];
-  while (dst != 0 && aligned_size > dst->size) {
+  while (dst != NULL && aligned_size > dst->size) {
     if (cnt >= MAX_BRUTE_SEARCH) {
       // we cant go ahead and brute search whole list, stop
       // trying after we have tried MAX_BRUTE_SEARCH items in the
@@ -240,17 +225,14 @@ void* localmem_alloc(struct localmem *mem, size_t size)
 
   dst->mem = mem;
   dst->ref_count = UNUSED_BLOCK_REFCOUNT | DATA_READY_MASK | 1; // put the block in use
-#ifdef MM_CHECK
+
   mm_check(mem);
-#endif
   return (void *)dst->data_ptr;
 }
 
 void localmem_free(struct localmem *mem, void *ptr) 
 {
-#ifdef MM_CHECK
   mm_check(mem);
-#endif
 
   // Get Block, and both adjacent blocks
   mem_block_t block = get_block_from_data_ptr(ptr);
@@ -277,9 +259,21 @@ void localmem_free(struct localmem *mem, void *ptr)
   }
   alloc_block(mem, merged_free_block, merged_free_block_size);
 
-#ifdef MM_CHECK
   mm_check(mem);
-#endif
+}
+
+void localmem_free_all(struct localmem *mem)
+{
+  mm_check(mem);
+
+  mem_block_t block = __sync_fetch_and_and(&mem->async_free_list, 0);
+  while (block != NULL) {
+    mem_block_t next = block->async_list_next;
+    localmem_free(mem, (void *)block->data_ptr);
+    block = next;
+  }
+
+  mm_check(mem);
 }
 
 void localmem_async_free(struct localmem *mem, void *ptr)
@@ -293,45 +287,22 @@ void localmem_async_free(struct localmem *mem, void *ptr)
   } while (__sync_bool_compare_and_swap(&mem->async_free_list, next, block) == 0);
 }
 
-void localmem_free_all(struct localmem *mem)
-{
-#ifdef MM_CHECK
-  mm_check(mem);
-#endif
-
-  mem_block_t block = __sync_fetch_and_and(&mem->async_free_list, 0);
-  while (block != NULL) {
-    mem_block_t next = block->async_list_next;
-    localmem_free(mem, (void *)block->data_ptr);
-    block = next;
-  }
-
-#ifdef MM_CHECK
-  mm_check(mem);
-#endif
-}
-
 void localmem_retain(void *ptr)
 {
   mem_block_t block = get_block_from_data_ptr(ptr);
   __sync_add_and_fetch(&(block->ref_count), 1);
 }
 
-void localmem_release(void *ptr)
+void localmem_release(void *ptr, int async_free)
 {
   mem_block_t block = get_block_from_data_ptr(ptr);
   unsigned long ref_count = __sync_sub_and_fetch(&(block->ref_count), 1);
   if (ref_count == UNUSED_BLOCK_REFCOUNT) {
-    localmem_free(block->mem, ptr);
-  }
-}
-
-void localmem_async_release(void *ptr)
-{
-  mem_block_t block = get_block_from_data_ptr(ptr);
-  unsigned long ref_count = __sync_sub_and_fetch(&(block->ref_count), 1);
-  if (ref_count == UNUSED_BLOCK_REFCOUNT) {
-    localmem_async_free(block->mem, ptr);
+    if (async_free == 0) {
+      localmem_free(block->mem, ptr);
+    } else {
+      localmem_async_free(block->mem, ptr);
+    }
   }
 }
 
@@ -436,9 +407,12 @@ int mm_check_heap(struct localmem *mem) {
   return 1;
 }
 
-int mm_check(struct localmem *mem) {
-  if (!mm_check_free_list(mem) || !mm_check_heap(mem)) {
-    return 0;
-  }
-  return 1;
+static inline void mm_check(struct localmem *mem) {
+#ifdef MM_CHECK
+  int r;
+  r = mm_check_free_list(mem);
+  assert(r == 1);
+  r = mm_check_heap(mem);
+  assert(r == 1);
+#endif
 }

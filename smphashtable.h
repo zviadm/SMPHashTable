@@ -11,8 +11,8 @@ typedef long hash_key;
 /**
  * struct hash_query - Hash table query
  * @optype: 0 - lookup, 1 - insert
+ * @size: size of data to insert
  * @key: key to lookup or insert
- * @value: pointer to the value
  */
 struct hash_query {
   int optype;
@@ -27,7 +27,8 @@ struct hash_table;
 
 /**
  * create_hash_table - Create new smp hash table
- * @max_size: maximum number of elements in hash table
+ * @max_size: maximum size in bytes that hash table can occupy
+ * @nelems: maximum number of elements in hash table
  * @nservers: number of servers that serve hash content
  * @return: pointer to the created hash table
  */
@@ -69,9 +70,6 @@ int create_hash_table_client(struct hash_table *hash_table);
  * @key: hash key to lookup value for
  * @return: pointer to hash_value structure holding value, or NULL if there
  * was no entry in hash table with given key
- *
- * after done using value, release_hash_value must be called to release
- * hash_value object
  */ 
 void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key);
 
@@ -80,7 +78,9 @@ void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key ke
  * @hash_table: pointer to the hash table structure
  * @client_id: client id to use to communicate with hash table servers
  * @key: hash key
- * @value: pointer to the value
+ * @size: size of data to insert
+ * @return: pointer to newly allocated space of given size which client should
+ * fill up with data
  */
 void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, int size);
 
@@ -116,7 +116,9 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
  * @hash_table: pointer to the hash table structure
  * @client_id: client id to use to communicate with hash table servers
  * @key: hash key
- * @value: pointer to the value
+ * @size: size of data to insert
+ * @return: pointer to newly allocated space of given size which client should
+ * fill up with data
  *
  * locking_hash_insert does insert in a hash without using hash servers or clients,
  * but instead using locks on partitions.

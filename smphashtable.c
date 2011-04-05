@@ -68,6 +68,9 @@ struct thread_args {
   struct hash_table *hash_table;
 };
 
+/*
+ * Hash Table data structure
+ */
 struct hash_table {
   int nservers;
   volatile int nclients;
@@ -85,7 +88,7 @@ struct hash_table {
   struct box_array *boxes;
 };
 
-// Forward declaration of functions
+// Forward declarations
 void init_hash_partition(struct hash_table *hash_table, struct partition *p);
 void destroy_hash_partition(struct partition *p);
 void *hash_table_server(void* args);
@@ -96,13 +99,16 @@ void hash_remove(struct partition *p, struct elem *e);
 void lru(struct partition *p, struct elem *e);
 
 /**
- * Hash Distribution functions
+ * hash_get_server: returns server that should handle given key
  */
 static inline int hash_get_server(const struct hash_table *hash_table, hash_key key)
 {
   return key % hash_table->nservers;
 }
 
+/**
+ * hash_get_bucket: returns bucket were given key is or should be placed
+ */
 static inline int hash_get_bucket(const struct partition *p, hash_key key)
 {
   return key % p->nhash;
@@ -184,7 +190,7 @@ void destroy_hash_partition(struct partition *p)
   struct lrulist *eh = &p->lru;
   struct elem *e = TAILQ_FIRST(eh);
   while (e != NULL) {
-    localmem_release(e->value);
+    localmem_release(e->value, 0);
     e = TAILQ_NEXT(e, lru);
   }
   localmem_destroy(&p->mem);
@@ -282,7 +288,7 @@ void *hash_table_server(void* args)
           k += INSERT_MSG_LENGTH;
         } else {
           e = hash_lookup(p, localbuf[k]);
-          if ((e != NULL) && localmem_is_ready(e->value)) {
+          if ((e != NULL) && (localmem_is_ready(e->value))) {
             value = (unsigned long)e->value;
             localmem_retain(e->value);
           }
@@ -458,7 +464,7 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size)
   struct elem *e = hash_lookup(p, key);
 
   if (e != NULL) {
-    localmem_release(e->value);
+    localmem_release(e->value, 0);
   } else if ((e == NULL) && (TAILQ_FIRST(&p->free) == NULL)) {
     struct elem *l = TAILQ_LAST(&p->lru, lrulist);
     assert(l);
@@ -495,7 +501,7 @@ void hash_remove(struct partition *p, struct elem *e)
   struct elist *eh = &(p->table[hash_get_bucket(p, e->key)].chain);
   TAILQ_REMOVE(eh, e, chain);
   TAILQ_REMOVE(&p->lru, e, lru);
-  localmem_release(e->value);
+  localmem_release(e->value, 0);
   TAILQ_INSERT_TAIL(&p->free, e, free);
 }
 

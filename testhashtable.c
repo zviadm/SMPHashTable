@@ -31,7 +31,7 @@ static inline long lookup(struct hash_table *table, int use_locking, int c, hash
   else {
     assert(localmem_is_ready(value));
     long val = *(long *)value;
-    localmem_async_release(value);
+    localmem_release(value, 1);
     return val;
   }
 }
@@ -217,7 +217,7 @@ void test4()
     assert(values[i] != NULL);
     assert(localmem_is_ready(values[i]));
     assert(*(long*)values[i] == i);
-    localmem_async_release(values[i]);
+    localmem_release(values[i], 1);
   }
 
   printf("Stopping Servers...\n");

@@ -1,17 +1,15 @@
 #ifndef __LOCALMEM_H_
 #define __LOCALMEM_H_
 
-/* Total number of bins */
+/* 
+ * Total number of bins. 
+ * 1 << (NUM_BINS) should be used as upper limit for allocation size
+ */
 #define NUM_BINS 20
 
-/* memory block type which consists of:
- *  block_size << 32 + ref_count
- *  next block
- *  prev block
- *  unused
- *  ... block data ...
- *  block_size
- * */
+/* 
+ * mem_block_t: memory block
+ */
 typedef struct mem_block* mem_block_t;
 
 /*
@@ -25,7 +23,7 @@ struct localmem {
 };
 
 /*
- * localmem_init - Initializes the smpalloc package. 
+ * localmem_init - Initializes local memory. 
  * Must be called once before any other calls are made.
  */
 void localmem_init(struct localmem *mem, size_t size);
@@ -48,15 +46,17 @@ void localmem_retain(void *ptr);
 /*
  * localmem_release - Releases and if necessary frees block allocated in local memory
  */
-void localmem_release(void *ptr);
+void localmem_release(void *ptr, int async_free);
 
 /*
- * localmem_async_release - Releases and if necessary asynchrnously schedules block to be 
- * freed. Scheduled blocks will be freed before next allocation.
+ * localmem_mark_ready - mark allocated memory block as ready to use
  */
-void localmem_async_release(void *ptr);
-
 void localmem_mark_ready(void *ptr);
+
+/*
+ * localmem_is_ready - returns 1 if memory block is ready to use
+ * 0 otherwise
+ */
 int localmem_is_ready(void *ptr);
 
 #endif
