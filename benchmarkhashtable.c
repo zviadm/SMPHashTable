@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <xmmintrin.h>
 
+#include <google/profiler.h>
+
 #include "ia32perf.h"
 #include "localmem.h"
 #include "smphashtable.h"
@@ -115,6 +117,7 @@ void run_benchmark()
  
   printf("Benchmark starting...\n"); 
   // start the clients
+  ProfilerStart("/tmp/cpu.info"); 
   double tstart = now();
 
   for (int i = 0; i < 6; i++) {
@@ -161,6 +164,7 @@ void run_benchmark()
   }
 
   double tend = now();
+  ProfilerStop();
 
   // print out all the important information
   printf("Benchmark Done. Design %d - Total time: %.3f, Iterations: %d\n", 

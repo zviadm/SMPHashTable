@@ -16,7 +16,7 @@ testhashtable: testhashtable.o $(LIB_OBJECTS)
 	gcc -o testhashtable testhashtable.o  $(LIB_OBJECTS) -lpthread -lm $(LFLAGS) 
 
 benchmarkhashtable: benchmarkhashtable.o $(LIB_OBJECTS)
-	gcc -o benchmarkhashtable benchmarkhashtable.o  $(LIB_OBJECTS) -lpthread -lm $(LFLAGS)
+	gcc -o benchmarkhashtable benchmarkhashtable.o  $(LIB_OBJECTS) -lpthread -lm -lprofiler $(LFLAGS)
 
 %.P : %.c
 				$(MAKEDEPEND)
