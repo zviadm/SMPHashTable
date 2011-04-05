@@ -6,7 +6,7 @@
 /**
  * hash_key - Hash table key type
  */
-typedef long hash_key;
+typedef unsigned long hash_key;
 
 /**
  * struct hash_query - Hash table query
@@ -136,5 +136,7 @@ int stats_get_nhits(struct hash_table *hash_table);
  * store hash table structures
  */
 size_t stats_get_overhead(struct hash_table *hash_table);
+
+void stats_get_extreme_buckets(struct hash_table *hash_table, int server, double *avg, double *stddev);
 
 #endif

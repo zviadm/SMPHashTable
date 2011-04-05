@@ -13,10 +13,10 @@ LIB_OBJECTS = smphashtable.o onewaybuffer.o localmem.o \
 all: testhashtable benchmarkhashtable 
 
 testhashtable: testhashtable.o $(LIB_OBJECTS)
-	gcc -o testhashtable testhashtable.o  $(LIB_OBJECTS) -lpthread $(LFLAGS) 
+	gcc -o testhashtable testhashtable.o  $(LIB_OBJECTS) -lpthread -lm $(LFLAGS) 
 
 benchmarkhashtable: benchmarkhashtable.o $(LIB_OBJECTS)
-	gcc -o benchmarkhashtable benchmarkhashtable.o  $(LIB_OBJECTS) -lpthread $(LFLAGS)
+	gcc -o benchmarkhashtable benchmarkhashtable.o  $(LIB_OBJECTS) -lpthread -lm $(LFLAGS)
 
 %.P : %.c
 				$(MAKEDEPEND)

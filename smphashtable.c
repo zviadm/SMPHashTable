@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <malloc.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +42,7 @@ struct partition {
   struct bucket *table;
   TAILQ_HEAD(lrulist, elem) lru;
   TAILQ_HEAD(freelist, elem) free;
+  int nservers;
   size_t max_size;
   int nelems;
   int nhash;
@@ -161,9 +163,15 @@ void destroy_hash_table(struct hash_table *hash_table)
 void init_hash_partition(struct hash_table *hash_table, struct partition *p)
 {
   assert((unsigned long)p % CACHELINE == 0);
+  p->nservers = hash_table->nservers;
   p->max_size = hash_table->max_size / hash_table->nservers;
   p->nelems = hash_table->nelems / hash_table->nservers;
-  p->nhash = max(10, p->nelems / BUCKET_LOAD);
+
+  // below is a trick to make GCD of p->nhash and hash_table->nservers equal to 1
+  // it can be proved that if GCD of nhash and nservers is 1 then, hash_get_server and
+  // hash_get_bucket will be unbiased when input is random
+  p->nhash = ceil((double)max(10.0, p->nelems / BUCKET_LOAD) / hash_table->nservers) * hash_table->nservers - 1;
+
   p->nhits = 0;
   hash_table->overhead += p->nhash * sizeof(struct bucket) + p->nelems * sizeof(struct elem);
 
@@ -529,3 +537,31 @@ size_t stats_get_overhead(struct hash_table *hash_table)
   return hash_table->overhead;
 }
 
+void stats_get_extreme_buckets(struct hash_table *hash_table, int server, double *avg, double *stddev)
+{
+  struct partition *p = &hash_table->partitions[server];
+
+  int nelems = 0;
+  struct elem *e;
+ 
+  e = TAILQ_FIRST(&p->lru);
+  while (e != NULL) {
+    nelems++;
+    e = TAILQ_NEXT(e, lru);
+  }
+  *avg = (double)nelems / p->nhash;
+  *stddev = 0;
+
+  for (int i = 0; i < p->nhash; i++) {
+    e = TAILQ_FIRST(&p->table[i].chain);
+    int length = 0;
+    while (e != NULL) {
+      e = TAILQ_NEXT(e, chain);
+      length++;
+    }
+
+    *stddev += (*avg - length) * (*avg - length);
+  }
+
+  *stddev = sqrt(*stddev / (nelems - 1));
+}

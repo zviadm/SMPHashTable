@@ -169,6 +169,12 @@ void run_benchmark()
       nservers, nclients, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / niters);
   printf("L2 Misses per iteration: %.3f\n", totalpmc / niters);
 
+  double avg, stddev;
+  for (int i = 0; i < nservers; i++) {
+    stats_get_extreme_buckets(hash_table, i, &avg, &stddev);
+    printf("Server %d Buckets, avg %.3f, stddev %.3f\n", i, avg, stddev);
+  }
+
   free(thread_id);
   free(cthreads);
   free(cdata);
