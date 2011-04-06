@@ -117,7 +117,7 @@ void run_benchmark()
 
   printf("Benchmark starting...\n"); 
   // start the clients
-  ProfilerStart("/tmp/cpu.info"); 
+  ProfilerStart("cpu.info"); 
   double tstart = now();
 
   for (int i = 0; i < 6; i++) {
