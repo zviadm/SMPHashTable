@@ -14,18 +14,19 @@
 #include "smphashtable.h"
 #include "util.h"
 
+int design          = 1;
 int nservers        = 1;
 int nclients        = 1;
-int niters          = 1000000;
-int nelems          = 1000000;
-size_t size         = 1000000;
+int first_core      = 1;
+int batch_size      = 1000;
+int niters          = 100000;
+int nelems          = 100000;
+size_t size         = 6400000;
 int query_mask      = 0xFFFFF;
 int write_threshold = (0.3f * (double)RAND_MAX);
-int design          = 1;
-int first_core      = 1;
-int batch_size      = 10;
+
 struct hash_table *hash_table;
-char rand_data[10000] = { 0 };
+long rand_data[10000] = { 0 };
 int iters_per_client; 
 
 uint64_t pmccount[100];
@@ -46,22 +47,6 @@ int main(int argc, char *argv[])
 {
   int opt_char;
 
-  /**
-   * Hash Table Benchmark Options
-   * @s: number of servers/partitions
-   * @c: number of clients
-   * @i: number of iterations
-   * @n: number of elements in cache
-   * @t: maximum size of cache
-   * @m: log of query mask
-   * @w: hash inserts / iterations
-   * @d: hash design to use
-   *     1 - Server/Client no buffering
-   *     2 - Server/Cleint with buffering
-   *     3 - Naive algorithm
-   * @f: first server core number 
-   *
-   */
   while((opt_char = getopt(argc, argv, "s:c:i:n:t:m:w:d:f:b:")) != -1) {
     switch (opt_char) {
       case 's':
@@ -95,7 +80,18 @@ int main(int argc, char *argv[])
         batch_size = atoi(optarg);
         break;
       default:
-        printf("usage\n");
+        printf("benchmark options are: \n"
+               "   -d design (1 = naive server/client, 2 = buffering server/client, 3 = locking)\n"
+               "   -s number of servers / partitions\n"
+               "   -c number of clients\n"
+               "   -f first core of servers (for design 1 & 2)\n"
+               "   -b batch size (for design 2)\n"
+               "   -i number of iterations\n"
+               "   -n max number of elements in cache\n"
+               "   -t max size of cache (in bytes)\n"
+               "   -m log of max hash key\n"
+               "   -w hash insert ratio over total number of queries\n"
+               "example './benchmarkhashtable -d 2 -s 3 -c 3 -f 3 -b 1000 -i 100000000 -n 10000 -t 640000 -m 15 -w 0.3'\n");
         exit(-1);
     }
   }
@@ -115,6 +111,10 @@ void run_benchmark()
     cdata[i].seed = rand();
   }
  
+  for (int i = 0; i < 10000; i++) {
+    rand_data[i] = i;
+  }
+
   printf("Benchmark starting...\n"); 
   // start the clients
   ProfilerStart("/tmp/cpu.info"); 
@@ -173,11 +173,13 @@ void run_benchmark()
       nservers, nclients, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / niters);
   printf("L2 Misses per iteration: %.3f\n", totalpmc / niters);
 
+#if 0
   double avg, stddev;
   for (int i = 0; i < nservers; i++) {
     stats_get_extreme_buckets(hash_table, i, &avg, &stddev);
     printf("Server %d Buckets, avg %.3f, stddev %.3f\n", i, avg, stddev);
   }
+#endif
 
   free(thread_id);
   free(cthreads);
@@ -207,6 +209,28 @@ void get_random_query(int client_id, struct hash_query *query)
   }
 }
 
+void handle_query_result(struct hash_query *query, void * value)
+{
+  long * val = value;
+  if (query->optype == 0) {
+    if (val != NULL) {
+      assert(val[0] == query->key);
+//      for (int i = 1; i < 1024 / 8; i++) {
+//        if (val[i] != rand_data[i - 1]) {
+//          printf("%d %ld %ld\n", i, val[i], rand_data[i - 1]);
+//        }
+//        assert(val[i] == rand_data[i-1]);
+//      }
+      localmem_release(val, 1);     
+    }
+  } else {
+    assert(val != NULL);
+    val[0] = query->key;
+//    memcpy(&val[1], rand_data, 1024 - 8);
+    localmem_mark_ready(val);
+  }
+}
+
 void * client_design1(void *args)
 {
   int c = *(int *)args;
@@ -221,15 +245,11 @@ void * client_design1(void *args)
     get_random_query(c, &query);
     if (query.optype == 0) {
       value = smp_hash_lookup(hash_table, cid, query.key);
-      if (value != NULL) {
-        assert(*(long *)value == query.key);
-        localmem_release(value, 1);
-      }
     } else {
       value = smp_hash_insert(hash_table, cid, query.key, query.size);
-      *(long*)value = query.key;
-      localmem_mark_ready(value);
     }
+
+    handle_query_result(&query, value);
   }
   return NULL;
 }
@@ -252,16 +272,7 @@ void * client_design2(void *args)
     smp_hash_doall(hash_table, cid, nqueries, queries, values);
 
     for (int k = 0; k < nqueries; k++) {
-      if (queries[k].optype == 0) {
-        if (values[k] != NULL) {
-          assert(*(long *)values[k] == queries[k].key);
-          localmem_release(values[k], 1);
-        }
-      } else {
-        assert(values[k] != NULL);
-        *((long *)(values[k])) = queries[k].key;
-        localmem_mark_ready(values[k]);
-      }
+      handle_query_result(&queries[k], values[k]);
     }
     i += nqueries;
   }
@@ -283,15 +294,11 @@ void * client_design3(void *args)
     get_random_query(c, &query);
     if (query.optype == 0) {
       value = locking_hash_lookup(hash_table, query.key);
-      if (value != NULL) {
-        assert(*(long *)value == query.key);
-        localmem_release(value, 1);
-      }
     } else {
       value = locking_hash_insert(hash_table, query.key, query.size);
-      *(long*)value = query.key;
-      localmem_mark_ready(value);
     }
+
+    handle_query_result(&query, value);
   }
   return NULL;
 }

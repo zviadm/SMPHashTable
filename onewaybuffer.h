@@ -8,11 +8,11 @@
 
 struct onewaybuffer {
   volatile unsigned long data[ONEWAY_BUFFER_SIZE];
-  volatile long rd_index;
+  volatile unsigned long rd_index;
   volatile char padding0[CACHELINE - sizeof(long)];
-  volatile long wr_index;
+  volatile unsigned long wr_index;
   volatile char padding1[CACHELINE - sizeof(long)];
-  volatile long tmp_wr_index;
+  volatile unsigned long tmp_wr_index;
   volatile char padding2[CACHELINE - sizeof(long)];
 } __attribute__ ((aligned (CACHELINE)));
 
