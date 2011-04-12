@@ -381,12 +381,14 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
       localbuf_index[ps]++;
     }
 
-    if (queries[i].optype == 0) {
+    if (queries[i].optype == OPTYPE_LOOKUP) {
       buffer_write(&boxes[client_id].boxes[s].in, queries[i].key);
-    } else {
+    } else if (queries[i].optype == OPTYPE_INSERT) {
       msg_data[0] = (unsigned long)queries[i].key | HASH_INSERT_MASK;
       msg_data[1] = (unsigned long)queries[i].size;
       buffer_write_all(&boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data, 0);
+    } else {
+      assert(0);
     }
     pending_count[s]++;
   }

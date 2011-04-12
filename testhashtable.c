@@ -191,11 +191,11 @@ void test4()
   struct hash_query queries[2 * nqueries];
 
   for (long i = 0; i < nqueries; i++) {
-    queries[i].optype = 1;
+    queries[i].optype = OPTYPE_INSERT;
     queries[i].key = i;
     queries[i].size = 8;
 
-    queries[nqueries + i].optype = 0;
+    queries[nqueries + i].optype = OPTYPE_LOOKUP;
     queries[nqueries + i].key = i;
   }
 

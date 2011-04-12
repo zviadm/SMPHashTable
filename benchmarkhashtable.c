@@ -189,8 +189,8 @@ void run_benchmark()
 
 void get_random_query(int client_id, struct hash_query *query)
 {
-  unsigned long optype = 
-    (rand_r(&cdata[client_id].seed) < write_threshold) ? 1 : 0; 
+  enum optype optype = 
+    (rand_r(&cdata[client_id].seed) < write_threshold) ? OPTYPE_INSERT : OPTYPE_LOOKUP; 
 
   unsigned long r1 = rand_r(&cdata[client_id].seed);
   unsigned long r2 = rand_r(&cdata[client_id].seed);
@@ -198,21 +198,15 @@ void get_random_query(int client_id, struct hash_query *query)
 
   query->optype = optype;
   query->key = r & query_mask;
-  if (optype == 1) {
+  if (optype == OPTYPE_INSERT) {
     query->size = 8;
-    /*
-    unsigned long v1 = rand_r(&cdata[client_id].seed);
-    unsigned long v2 = rand_r(&cdata[client_id].seed);
-    unsigned long v = ((v1 << 16) + v2);
-    query->value = (void *)v;
-    */
   }
 }
 
 void handle_query_result(struct hash_query *query, void * value)
 {
   long * val = value;
-  if (query->optype == 0) {
+  if (query->optype == OPTYPE_LOOKUP) {
     if (val != NULL) {
       assert(val[0] == query->key);
 //      for (int i = 1; i < 1024 / 8; i++) {
@@ -243,7 +237,7 @@ void * client_design1(void *args)
   for (int i = 0; i < iters_per_client; i++) {
     // generate random query
     get_random_query(c, &query);
-    if (query.optype == 0) {
+    if (query.optype == OPTYPE_LOOKUP) {
       value = smp_hash_lookup(hash_table, cid, query.key);
     } else {
       value = smp_hash_insert(hash_table, cid, query.key, query.size);
@@ -292,7 +286,7 @@ void * client_design3(void *args)
   for (int i = 0; i < iters_per_client; i++) {
     // generate random query
     get_random_query(c, &query);
-    if (query.optype == 0) {
+    if (query.optype == OPTYPE_LOOKUP) {
       value = locking_hash_lookup(hash_table, query.key);
     } else {
       value = locking_hash_insert(hash_table, query.key, query.size);

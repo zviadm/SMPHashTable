@@ -8,6 +8,11 @@
  */
 typedef unsigned long hash_key;
 
+enum optype {
+  OPTYPE_LOOKUP = 0,
+  OPTYPE_INSERT = 1
+};
+
 /**
  * struct hash_query - Hash table query
  * @optype: 0 - lookup, 1 - insert
@@ -15,7 +20,7 @@ typedef unsigned long hash_key;
  * @key: key to lookup or insert
  */
 struct hash_query {
-  int optype;
+  enum optype optype;
   int size;
   hash_key key;
 };
