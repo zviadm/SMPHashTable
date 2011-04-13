@@ -9,6 +9,7 @@
 
 #include "hashclient.h"
 #include "smphashtable.h"
+#include "util.h"
 
 int nclients        = 1;
 int batch_size      = 1000;

@@ -15,10 +15,19 @@
 
 int design          = 1;
 int nservers        = 1;
+int nclients        = 1;
 int batch_size      = 1000;
 int nelems          = 100000;
 size_t size         = 6400000;
 struct hash_table *hash_table;
+
+struct thread_args {
+  int cid;
+  int core;
+  volatile int socket;
+};
+
+struct thread_args args[100];
 
 // Forward Declarations
 void run_server();
@@ -28,10 +37,13 @@ int main(int argc, char *argv[])
 {
   int opt_char;
 
-  while((opt_char = getopt(argc, argv, "s:c:i:n:t:m:w:d:f:b:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:c:n:t:d:b:")) != -1) {
     switch (opt_char) {
       case 's':
         nservers = atoi(optarg);
+        break;
+      case 'c':
+        nclients = atoi(optarg);
         break;
       case 'n':
         nelems = atoi(optarg);
@@ -50,6 +62,7 @@ int main(int argc, char *argv[])
         printf("hash server options are: \n"
                "   -d design (1 = naive server/client, 2 = buffering server/client, 3 = locking)\n"
                "   -s number of servers / partitions\n"
+               "   -c maximum number of clients\n"
                "   -b batch size (for design 2)\n"
                "   -n max number of elements in cache\n"
                "   -t max size of cache (in bytes)\n");
@@ -68,6 +81,13 @@ void run_server()
 
   if (design == 1 || design == 2) {
     start_hash_table_servers(hash_table, 0);
+  }
+
+  assert(nclients <= 100);
+  for (int i = 0; i < nclients; i++) {
+    args[i].cid = (design == 1 || design == 2) ? create_hash_table_client(hash_table) : 0;
+    args[i].core = nservers + i;
+    args[i].socket = -1;
   }
 
   struct sockaddr_in sin;
@@ -102,8 +122,14 @@ void run_server()
     assert(s1 >= 0);
     setsockopt(s1, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
     
+    int i = 0;
+    while (args[i].socket != -1) {
+      i = (i + 1) % nclients;
+    }
+    args[i].socket = s1;
+
     pthread_t tcpth;
-    ret = pthread_create(&tcpth, 0, tcpgo, (void *)s1);
+    ret = pthread_create(&tcpth, 0, tcpgo, (void *)&args[i]);
     assert(ret == 0);
     pthread_detach(tcpth);
   }
@@ -118,8 +144,11 @@ void run_server()
 void * tcpgo(void *xarg)
 {
   size_t r;
-  int s = (long)xarg;
-  printf("Client connected\n");
+  int cid = ((struct thread_args *)xarg)->cid;
+  int s = ((struct thread_args *)xarg)->socket;
+  set_affinity(((struct thread_args *)xarg)->core);
+
+  printf("Client connected, cid: %d, socket: %d\n", cid, s);
   
   FILE *fin = fdopen(s, "r");
   FILE *fout = fdopen(s, "w");
@@ -128,7 +157,6 @@ void * tcpgo(void *xarg)
     return NULL;
   }
     
-  int cid = create_hash_table_client(hash_table);
   struct hash_query *queries = (struct hash_query *)memalign(CACHELINE, batch_size * sizeof(struct hash_query));
   void **values = (void **)memalign(CACHELINE, batch_size * sizeof(void *));
 
@@ -182,5 +210,8 @@ void * tcpgo(void *xarg)
   fclose(fin);
   fclose(fout);
   close(s);
+
+  printf("Client disconnected, cid: %d, socket: %d\n", cid, s);
+  ((struct thread_args *)xarg)->socket = -1;
   return NULL;
 }
