@@ -14,6 +14,6 @@ void closeconn(hashconn_t conn);
 
 void sendqueries(hashconn_t conn, int nqueries, struct hash_query *queries, void **values);
 
-void readvalue(hashconn_t conn, struct hash_query *query, void *value);
+int readvalue(hashconn_t conn, struct hash_query *query, void *value);
 
 #endif

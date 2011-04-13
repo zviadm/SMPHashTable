@@ -14,7 +14,8 @@
 
 struct hashconn {
   int socket;
-  FILE * file;
+  FILE * fin;
+  FILE * fout;
 };
 
 int openconn(struct hashconn **conn, const char *serverip) 
@@ -38,8 +39,9 @@ int openconn(struct hashconn **conn, const char *serverip)
     return -1;
   }
 
-  (*conn)->file = fdopen((*conn)->socket, "r+");
-  if ((*conn)->file == NULL) {
+  (*conn)->fin = fdopen((*conn)->socket, "r");
+  (*conn)->fout = fdopen((*conn)->socket, "w");
+  if ((*conn)->fin == NULL || (*conn)->fout == NULL) {
     return -1;
   }
   return 0;
@@ -47,33 +49,47 @@ int openconn(struct hashconn **conn, const char *serverip)
 
 void closeconn(struct hashconn *conn) 
 {
-  fclose(conn->file);
+  fclose(conn->fin);
+  fclose(conn->fout);
   close(conn->socket);
   free(conn);
 }
 
 void sendqueries(struct hashconn *conn, int nqueries, struct hash_query *queries, void **values)
 {
+  size_t r;
   assert(conn != NULL);
-  assert(conn->file != NULL);
+  assert(conn->fout != NULL);
 
-  fwrite(&nqueries, sizeof(int), 1, conn->file);
-  fwrite(queries, sizeof(struct hash_query), nqueries, conn->file); 
-  fflush(conn->file);
+  r = fwrite(&nqueries, sizeof(int), 1, conn->fout);
+  assert(r == 1);
+  r = fwrite(queries, sizeof(struct hash_query), nqueries, conn->fout); 
+  assert(r == nqueries);
+  fflush(conn->fout);
   for (int i = 0; i < nqueries; i++) {
     if (queries[i].optype == OPTYPE_INSERT) {
-      fwrite(values[i], 1, queries[i].size, conn->file);
+      //printf("%d, %d, %p\n", i, queries[i].size, values[i]);
+      r = fwrite(values[i], 1, queries[i].size, conn->fout);
+      assert(r == queries[i].size);
     }
   }
-  fflush(conn->file);
+  fflush(conn->fout);
 }
 
-void readvalue(struct hashconn *conn, struct hash_query *query, void *value)
+int readvalue(struct hashconn *conn, struct hash_query *query, void *value)
 {
+  size_t r;
   assert(conn != NULL);
-  assert(conn->file != NULL);
+  assert(conn->fin != NULL);
   assert(query->optype == OPTYPE_LOOKUP);
 
-  int r = fread(value, 1, query->size, conn->file);
-  assert(r == query->size);
+  int size;
+  r = fread(&size, sizeof(int), 1, conn->fin);
+  assert(r == 1);
+
+  if (size > 0) {
+    r = fread(value, 1, size, conn->fin);
+    assert(r == size);
+  }
+  return size;
 }

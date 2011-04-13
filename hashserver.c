@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <xmmintrin.h>
 
 #include "localmem.h"
 #include "smphashtable.h"
@@ -40,6 +41,7 @@ int main(int argc, char *argv[])
         break;
       case 'd':
         design = atoi(optarg);
+        assert(design == 2 || design == 3);
         break;
       case 'b':
         batch_size = atoi(optarg);
@@ -115,11 +117,13 @@ void run_server()
 // serve a client tcp socket, in a dedicated thread
 void * tcpgo(void *xarg)
 {
+  size_t r;
   int s = (long)xarg;
   printf("Client connected\n");
   
-  FILE *f = fdopen(s, "r+");
-  if (f == NULL) {
+  FILE *fin = fdopen(s, "r");
+  FILE *fout = fdopen(s, "w");
+  if (fin == NULL || fout == NULL) {
     perror("fdopen");
     return NULL;
   }
@@ -129,41 +133,54 @@ void * tcpgo(void *xarg)
   void **values = (void **)memalign(CACHELINE, batch_size * sizeof(void *));
 
   while (1) {
-    size_t r;
     int nqueries;
-    r = fread(&nqueries, sizeof(int), 1, f);
-    if (feof(f)) break;
+    r = fread(&nqueries, sizeof(int), 1, fin);
+    if (feof(fin)) break;
 
     assert(r == 1);
     assert(nqueries <= batch_size);
 
-    r = fread(queries, sizeof(struct hash_query), nqueries, f);
+    r = fread(queries, sizeof(struct hash_query), nqueries, fin);
     assert(r == nqueries);
+  
+    if (design == 2) {
+      smp_hash_doall(hash_table, cid, nqueries, queries, values);
+    } else if (design == 3) {
+      for (int k = 0; k < nqueries; k++) {
+        if (queries[k].optype == OPTYPE_LOOKUP) {
+          values[k] = locking_hash_lookup(hash_table, queries[k].key);
+        } else {
+          values[k] = locking_hash_insert(hash_table, queries[k].key, queries[k].size);
+        }
+      }
+    }
 
-    printf("Received batch of size %d\n", nqueries);
-    smp_hash_doall(hash_table, cid, nqueries, queries, values);
-    
     for (int k = 0; k < nqueries; k++) {
       if (queries[k].optype == OPTYPE_LOOKUP) {
-        if (values[k] != NULL) {
-          fwrite(values[k], 1, queries[k].size, f);
+        int size = (values[k] == NULL) ? 0 : queries[k].size;
+        r = fwrite(&size, sizeof(int), 1, fout);
+        assert(r == 1);
+        if (size != 0) {
+          r = fwrite(values[k], 1, size, fout);
+          assert(r == size);
           localmem_release(values[k], 1);     
-        }
+        } 
       } else if (queries[k].optype == OPTYPE_INSERT) {
         assert(values[k] != NULL);
-        r = fread(values[k], 1, queries[k].size, f);
+        r = fread(values[k], 1, queries[k].size, fin);
         assert(r == queries[k].size);
         localmem_mark_ready(values[k]);
       } else {
         assert(0);
       }
     }
-    fflush(f);
+    fflush(fout);
   }
 
   free(queries);
   free(values);
-  fclose(f);
+  fclose(fin);
+  fclose(fout);
   close(s);
   return NULL;
 }
