@@ -76,12 +76,11 @@ void sendqueries(struct hashconn *conn, int nqueries, struct hash_query *queries
   fflush(conn->fout);
 }
 
-int readvalue(struct hashconn *conn, struct hash_query *query, void *value)
+int readvalue(struct hashconn *conn, void *value)
 {
   size_t r;
   assert(conn != NULL);
   assert(conn->fin != NULL);
-  assert(query->optype == OPTYPE_LOOKUP);
 
   int size;
   r = fread(&size, sizeof(int), 1, conn->fin);

@@ -32,7 +32,6 @@ void test1()
 
     queries[nqueries + i].optype = OPTYPE_LOOKUP;
     queries[nqueries + i].key = i;
-    queries[nqueries + i].size = 8;
   }
 
   printf("Sending Insert Queries...\n");
@@ -43,7 +42,7 @@ void test1()
   printf("Reading received values...\n");
   for (int i = 0; i < nqueries; i++) {
     long val;
-    int size = readvalue(conn, &queries[nqueries + i], &val);
+    int size = readvalue(conn, &val);
     assert(size == 8);
     assert(val == i);
   }

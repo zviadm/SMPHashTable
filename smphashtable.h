@@ -132,16 +132,13 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
 void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size);
 
 /**
- * stats_get_nhits: Get total number of hash requests that were hits
+ * Stats functions
  */
+void stats_reset(struct hash_table *hash_table);
 int stats_get_nhits(struct hash_table *hash_table);
-
-/**
- * stats_get_overhead: Returns total memory in bytes that is used to
- * store hash table structures
- */
+int stats_get_nlookups(struct hash_table *hash_table);
+int stats_get_ninserts(struct hash_table *hash_table);
 size_t stats_get_overhead(struct hash_table *hash_table);
-
-void stats_get_extreme_buckets(struct hash_table *hash_table, int server, double *avg, double *stddev);
+void stats_get_buckets(struct hash_table *hash_table, int server, double *avg, double *stddev);
 
 #endif

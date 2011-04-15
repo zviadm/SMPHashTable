@@ -11,10 +11,12 @@
 #include "smphashtable.h"
 #include "util.h"
 
+int design          = 1;
 int nclients        = 1;
 int batch_size      = 1000;
 int niters          = 100000;
 int query_mask      = 0xFFFFF;
+int first_core      = 0;
 int write_threshold = (0.3f * (double)RAND_MAX);
 char serverip[100]  = "127.0.0.1";
 
@@ -29,13 +31,15 @@ struct client_data *cdata;
 
 void run_benchmark();
 void get_random_query(int client_id, struct hash_query *query);
-void * client(void *args);
+void * client(void *xargs);
+void * client_fast(void *xargs);
+void * client_fast_receiver(void *xargs);
 
 int main(int argc, char *argv[])
 {
   int opt_char;
 
-  while((opt_char = getopt(argc, argv, "s:c:i:m:w:b:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:c:i:m:w:b:f:d:")) != -1) {
     switch (opt_char) {
       case 's':
         if (strlen(optarg) < 100) {
@@ -60,6 +64,12 @@ int main(int argc, char *argv[])
       case 'b':
         batch_size = atoi(optarg);
         break;
+      case 'f':
+        first_core = atoi(optarg);
+        break;
+      case 'd':
+        design = atoi(optarg);
+        break;
       default:
         printf("benchmark options are: \n"
                "   -s server ip address\n"
@@ -68,6 +78,7 @@ int main(int argc, char *argv[])
                "   -i number of iterations\n"
                "   -m log of max hash key\n"
                "   -w hash insert ratio over total number of queries\n"
+               "   -f first core to run first client\n"
                "example './benchmarkhashserver -c 3 -b 1000 -i 100000000 -m 15 -w 0.3'\n");
         exit(-1);
     }
@@ -80,7 +91,7 @@ int main(int argc, char *argv[])
 
 void run_benchmark() 
 {
-  srand(19890811);
+  srand(19890811 + (int)getpid());
 
   cdata = malloc(nclients * sizeof(struct client_data));
   for (int i = 0; i < nclients; i++) {
@@ -91,7 +102,7 @@ void run_benchmark()
     rand_data[i] = i;
   }
 
-  printf("Benchmark starting...\n"); 
+  printf("Benchmark starting..., pid: %d\n", (int)getpid()); 
   // start the clients
   double tstart = now();
 
@@ -100,7 +111,9 @@ void run_benchmark()
   int *thread_id = (int *)malloc(nclients * sizeof(pthread_t));
   for (int i = 0; i < nclients; i++) {
     thread_id[i] = i;
-    r = pthread_create(&cthreads[i], NULL, client, (void *) &thread_id[i]);
+    r = pthread_create(&cthreads[i], NULL, 
+        (design == 1) ? client : client_fast, 
+        (void *) &thread_id[i]);
     assert(r == 0);
   }
 
@@ -135,10 +148,10 @@ void get_random_query(int client_id, struct hash_query *query)
   query->size = 8;
 }
 
-void * client(void *args)
+void * client(void *xargs)
 {
-  int c = *(int *)args;
-  //set_affinity(c);
+  int c = *(int *)xargs;
+  set_affinity(c + first_core);
   
   hashconn_t conn;
   if (openconn(&conn, serverip) < 0) {
@@ -149,6 +162,7 @@ void * client(void *args)
   struct hash_query *queries = (struct hash_query *)memalign(CACHELINE, batch_size * sizeof(struct hash_query));
   void **values = (void **)memalign(CACHELINE, batch_size * sizeof(void *));
   int i = 0;
+
   while (i < iters_per_client) {
     int nqueries = min(iters_per_client - i, batch_size);
     for (int k = 0; k < nqueries; k++) {
@@ -165,10 +179,12 @@ void * client(void *args)
     for (int k = 0; k < nqueries; k++) {
       if (queries[k].optype == OPTYPE_LOOKUP) {
         long val;
-        int size = readvalue(conn, &queries[k], &val);
+        int size = readvalue(conn, &val);
         if (size != 0) {
           assert(size == 8);
-          assert(val == queries[k].key);
+          if (val != queries[k].key) {
+            printf("ERROR: invalid value %ld, should be %ld\n", val, queries[k].key);
+          }
         }
       }
     }
@@ -178,5 +194,86 @@ void * client(void *args)
   free(queries);
   free(values);
   closeconn(conn);      
+  return NULL;
+}
+
+struct thread_args {
+  int id;
+  hashconn_t conn;
+  volatile int nlookups;
+  volatile int quitting;
+};
+
+void * client_fast(void *xargs)
+{
+  int r;
+  int c = *(int *)xargs;
+  set_affinity(c + first_core);
+  
+  hashconn_t conn;
+  if (openconn(&conn, serverip) < 0) {
+    printf("failed to connect to server\n");
+    return NULL;
+  }
+
+  struct thread_args args;
+  args.id = c;
+  args.conn = conn;
+  args.nlookups = 0;
+  args.quitting = 0;
+
+  pthread_t threcv;
+  r = pthread_create(&threcv, NULL, client_fast_receiver, (void *) &args);
+  assert(r == 0);
+
+  struct hash_query *queries = (struct hash_query *)memalign(CACHELINE, batch_size * sizeof(struct hash_query));
+  void **values = (void **)memalign(CACHELINE, batch_size * sizeof(void *));
+  int i = 0;
+
+  while (i < iters_per_client) {
+    int nqueries = min(iters_per_client - i, batch_size);
+    for (int k = 0; k < nqueries; k++) {
+      get_random_query(c, &queries[k]);
+      if (queries[k].optype == OPTYPE_INSERT) {
+        values[k] = &queries[k].key;
+      } else{
+        args.nlookups++;
+        values[k] = NULL;
+      }
+    }
+
+    sendqueries(conn, nqueries, queries, values);
+    i += nqueries;
+  }
+
+  args.quitting = 1;
+  void *value;
+  r = pthread_join(threcv, &value);
+  assert(r == 0);
+
+  free(queries);
+  free(values);
+  closeconn(conn);      
+  return NULL;
+}
+
+void * client_fast_receiver(void *xargs)
+{
+  struct thread_args *args = (struct thread_args *)xargs;
+  set_affinity(args->id + first_core);
+  hashconn_t conn = args->conn;
+
+  int nreads = 0;
+  while (args->quitting == 0 || nreads < args->nlookups) {
+    while (nreads < args->nlookups) {
+      long val;
+      int size = readvalue(conn, &val);
+
+      if (size != 0) {
+        assert(size == 8);
+      }
+      nreads++;
+    }
+  }
   return NULL;
 }
