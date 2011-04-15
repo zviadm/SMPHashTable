@@ -8,7 +8,7 @@
  */
 typedef struct hashconn * hashconn_t;
 
-int openconn(struct hashconn **conn, const char *serverip);
+int openconn(hashconn_t *conn, const char *serverip);
 
 void closeconn(hashconn_t conn);
 

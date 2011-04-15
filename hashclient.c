@@ -68,7 +68,6 @@ void sendqueries(struct hashconn *conn, int nqueries, struct hash_query *queries
   fflush(conn->fout);
   for (int i = 0; i < nqueries; i++) {
     if (queries[i].optype == OPTYPE_INSERT) {
-      //printf("%d, %d, %p\n", i, queries[i].size, values[i]);
       r = fwrite(values[i], 1, queries[i].size, conn->fout);
       assert(r == queries[i].size);
     }

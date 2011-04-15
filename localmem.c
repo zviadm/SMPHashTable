@@ -24,7 +24,7 @@
 /* Maximum through how many blocks will i brute force search */
 #define MAX_BRUTE_SEARCH 10
 
-/* Until first write, newly allocated block is not ready */
+/* Until first write, newly allocated block is not ready to be read */
 #define UNUSED_BLOCK_REFCOUNT 0x8000000000000000
 #define DATA_READY_MASK       0x4000000000000000
 
@@ -225,6 +225,7 @@ void* localmem_alloc(struct localmem *mem, size_t size)
 
   dst->mem = mem;
   dst->ref_count = UNUSED_BLOCK_REFCOUNT | DATA_READY_MASK | 1; // put the block in use
+  mem->memused += dst->size;
 
   mm_check(mem);
   return (void *)dst->data_ptr;
@@ -242,6 +243,7 @@ void localmem_free(struct localmem *mem, void *ptr)
   // This will be the merged block
   mem_block_t merged_free_block = block;
   size_t merged_free_block_size = block->size;
+  mem->memused -= block->size;
 
   if ((prev_block != NULL) && (prev_block->ref_count == 0))
   {

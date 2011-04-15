@@ -20,6 +20,7 @@ struct localmem {
   volatile mem_block_t async_free_list;
   void *startaddr;
   void *endaddr;
+  size_t memused;
 };
 
 /*
@@ -58,5 +59,14 @@ void localmem_mark_ready(void *ptr);
  * 0 otherwise
  */
 int localmem_is_ready(void *ptr);
+
+/**
+ * localmem_used - returns number of bytes that are allocated in
+ * local memory 
+ */
+static inline size_t localmem_used(struct localmem *mem) 
+{
+  return mem->memused;
+}
 
 #endif

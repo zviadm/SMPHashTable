@@ -34,7 +34,7 @@ struct thread_args {
   volatile int socket;
 };
 
-struct thread_args args[100];
+struct thread_args args[MAX_CLIENTS];
 volatile int active_clients = 0;
 volatile double start_time, end_time;
 
@@ -55,6 +55,7 @@ int main(int argc, char *argv[])
         break;
       case 'c':
         nclients = atoi(optarg);
+        assert(nclients <= MAX_CLIENTS);
         break;
       case 'n':
         nelems = atoi(optarg);
@@ -91,6 +92,12 @@ void print_stats()
 
   printf("nhits: %d, nlookups: %d, ninserts: %d, nhits/nlookups: %.3f, ninserts/total:%.3f\n", 
       nhits, nlookups, ninserts, (double)nhits / nlookups, (double)ninserts / (nlookups + ninserts));
+
+  size_t used, total;
+  double util;
+  stats_get_mem(hash_table, &used, &total, &util);
+  printf("memory used: %zu (%.2f%%), total: %zu, utilization: %.2f%%\n", 
+      used, (double) used / total * 100.0, total, util * 100.0);
 }
 
 void run_server() 
@@ -241,6 +248,10 @@ void * tcpgo(void *xarg)
 
     doqueries(cid, nqueries, queries, values);  
 
+    // handle values returned after completeing all the queries
+    // this loop must go through every returned value, even if
+    // fin and fout are broken, otherwise there will be memory leaks
+    // for any value that is not releaesd or marked ready
     for (int k = 0; k < nqueries; k++) {
       struct hash_value *val = values[k];
 

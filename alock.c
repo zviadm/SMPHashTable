@@ -1,12 +1,14 @@
 #include <stdio.h>
 #include <assert.h>
+#include <xmmintrin.h>
 
 #include "alock.h"
+#include "util.h"
 
 void anderson_init(struct alock *al, int nthread)
 {
   assert(al);
-  assert(nthread < MAX_NTHREAD);
+  assert(nthread < MAX_CLIENTS);
   al->has_lock[0].x = 1;
   al->nthread = nthread;
   al->next_slot = 0;
@@ -19,7 +21,7 @@ void anderson_acquire(struct alock *lock, int *extra)
     __sync_fetch_and_add(&lock->next_slot, -lock->nthread);
   me = me % lock->nthread;
   while(lock->has_lock[me].x == 0) {
-    __asm __volatile("pause");
+    _mm_pause();
   }
   lock->has_lock[me].x = 0;
   *extra = me;

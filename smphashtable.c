@@ -13,7 +13,6 @@
 #include "smphashtable.h"
 #include "util.h"
 
-#define MAX_CLIENTS       50
 #define BUCKET_LOAD       2
 #define SERVER_READ_COUNT BUFFER_FLUSH_COUNT 
 #define ELEM_OVERHEAD     (sizeof(hash_key) + sizeof(struct hash_value))
@@ -29,6 +28,7 @@
 struct elem {
   hash_key key;
   void *value;
+  size_t size;
   TAILQ_ENTRY(elem) chain;
   TAILQ_ENTRY(elem) lru;
   TAILQ_ENTRY(elem) free;
@@ -44,6 +44,7 @@ struct partition {
   TAILQ_HEAD(freelist, elem) free;
   int nservers;
   size_t max_size;
+  size_t size;
   int nelems;
   int nhash;
   int nhits;
@@ -167,6 +168,7 @@ void init_hash_partition(struct hash_table *hash_table, struct partition *p)
   assert((unsigned long)p % CACHELINE == 0);
   p->nservers = hash_table->nservers;
   p->max_size = hash_table->max_size / hash_table->nservers;
+  p->size = 0;
   p->nelems = hash_table->nelems / hash_table->nservers;
 
   // below is a trick to make GCD of p->nhash and hash_table->nservers equal to 1
@@ -369,10 +371,20 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
     int s = hash_get_server(hash_table, queries[i].key); 
 
     while (pending_count[s] >= ONEWAY_BUFFER_SIZE) {
+      // we need to read values from server "s" buffer otherwise if we try to write
+      // more queries to server "s" it will be blocked trying to write the return value 
+      // to the buffer and it can easily cause deadlock between clients and servers
+      //
+      // however instead of reading server "s"-s buffer immediatelly we will read elements 
+      // in same order that they were queued till we reach elements that were queued for 
+      // server "s"
       int ps = hash_get_server(hash_table, queries[pindex].key); 
       if (localbuf_index[ps] == localbuf_size[ps]) {
         int count;
         if ((count = buffer_read_all(&boxes[client_id].boxes[ps].out, ONEWAY_BUFFER_SIZE, &localbuf[ps * ONEWAY_BUFFER_SIZE])) == 0) {
+          // if the read fails it might be that client's output buffer has not been flushed yet
+          // this is very unlikley scenario, since in general server's output is always available
+          // for client when it needs to read it
           buffer_flush(&boxes[client_id].boxes[ps].in);
           while ((count = buffer_read_all(&boxes[client_id].boxes[ps].out, ONEWAY_BUFFER_SIZE, &localbuf[ps * ONEWAY_BUFFER_SIZE])) == 0) {
             _mm_pause();
@@ -400,6 +412,7 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
     pending_count[s]++;
   }
 
+  // after queueing all the queries we flush all buffers and read all remaining values
   for (int i = 0; i < hash_table->nservers; i++) {
     buffer_flush(&boxes[client_id].boxes[i].in);
   }
@@ -480,6 +493,7 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size)
   struct elem *e = hash_lookup(p, key);
 
   if (e != NULL) {
+    p->size -= e->size;
     localmem_release(e->value, 0);
   } else if ((e == NULL) && (TAILQ_FIRST(&p->free) == NULL)) {
     struct elem *l = TAILQ_LAST(&p->lru, lrulist);
@@ -490,7 +504,7 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size)
   // try to allocate space for new value
   void *value;
   while ((value = localmem_alloc(&p->mem, size)) == NULL) {
-    // TODO: we might want to do something more special here
+    // TODO: we might want to do something more smart here
     // i.e. remove only large enough elements or do not do check every time
     // or even keep separate lrus for different size elements
     // also if it is taking too long to allocate just discard it
@@ -509,6 +523,8 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size)
 
   e->key = key;
   e->value = value;
+  e->size = size;
+  p->size += size;
   return e;
 }
 
@@ -517,6 +533,7 @@ void hash_remove(struct partition *p, struct elem *e)
   struct elist *eh = &(p->table[hash_get_bucket(p, e->key)].chain);
   TAILQ_REMOVE(eh, e, chain);
   TAILQ_REMOVE(&p->lru, e, lru);
+  p->size -= e->size;
   localmem_release(e->value, 0);
   TAILQ_INSERT_TAIL(&p->free, e, free);
 }
@@ -599,4 +616,22 @@ void stats_get_buckets(struct hash_table *hash_table, int server, double *avg, d
   }
 
   *stddev = sqrt(*stddev / (nelems - 1));
+}
+
+void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total, double *util)
+{
+  struct partition *p;
+  size_t m = 0, s = 0, u = 0;
+
+  for (int i = 0; i < hash_table->nservers; i++) {
+    p = &hash_table->partitions[i];
+  
+    m += p->max_size;
+    s += p->size;
+    u += localmem_used(&p->mem);
+  }
+
+  *total = m;
+  *used = u;
+  *util = (double)(s) / u;
 }

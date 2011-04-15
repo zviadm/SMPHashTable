@@ -21,7 +21,6 @@ int write_threshold = (0.3f * (double)RAND_MAX);
 char serverip[100]  = "127.0.0.1";
 
 struct hash_table *hash_table;
-long rand_data[10000] = { 0 };
 int iters_per_client; 
 
 struct client_data {
@@ -98,10 +97,6 @@ void run_benchmark()
     cdata[i].seed = rand();
   }
  
-  for (int i = 0; i < 10000; i++) {
-    rand_data[i] = i;
-  }
-
   printf("Benchmark starting..., pid: %d\n", (int)getpid()); 
   // start the clients
   double tstart = now();
@@ -125,7 +120,6 @@ void run_benchmark()
 
   double tend = now();
 
-  // print out all the important information
   printf("Benchmark Done. Total time: %.3f, Iterations: %d\n", 
       tend - tstart, niters);
 
