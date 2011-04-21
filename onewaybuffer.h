@@ -3,7 +3,7 @@
 
 #include "util.h"
 
-#define ONEWAY_BUFFER_SIZE    32 // must be power of 2 and multiple of (CACHELINE >> 3)
+#define ONEWAY_BUFFER_SIZE    16 // must be power of 2 and multiple of (CACHELINE >> 3)
 #define BUFFER_FLUSH_COUNT    8
 
 struct onewaybuffer {

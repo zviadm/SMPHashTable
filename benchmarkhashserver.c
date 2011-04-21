@@ -20,7 +20,6 @@ int first_core      = 0;
 int write_threshold = (0.3f * (double)RAND_MAX);
 char serverip[100]  = "127.0.0.1";
 
-struct hash_table *hash_table;
 int iters_per_client; 
 
 struct client_data {

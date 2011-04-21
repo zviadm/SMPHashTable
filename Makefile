@@ -12,7 +12,7 @@ SRCS = testhashtable.c benchmarkhashtable.c \
 LIB_OBJECTS = hashclient.o smphashtable.o onewaybuffer.o localmem.o \
 	util.o alock.o ia32msr.o ia32perf.o
 
-all: testhashtable benchmarkhashtable testhashserver benchmarkhashserver hashserver
+all: testhashtable benchmarkhashtable testhashserver benchmarkhashserver hashserver benchmarkmemcached
 
 testhashtable: testhashtable.o $(LIB_OBJECTS)
 	gcc -o testhashtable testhashtable.o  $(LIB_OBJECTS) -lpthread -lm $(LFLAGS) 
@@ -29,6 +29,9 @@ benchmarkhashserver: benchmarkhashserver.o $(LIB_OBJECTS)
 hashserver: hashserver.o $(LIB_OBJECTS)
 	gcc -o hashserver hashserver.o  $(LIB_OBJECTS) -lpthread -lm $(LFLAGS) 
 
+benchmarkmemcached: benchmarkmemcached.o $(LIB_OBJECTS)
+	gcc -o benchmarkmemcached benchmarkmemcached.o $(LIB_OBJECTS) /usr/local/lib/libmemcached.a -lpthread -lm $(LFLAGS)
+
 %.P : %.c
 				$(MAKEDEPEND)
 				@sed 's/\($*\)\.o[ :]*/\1.o $@ : /g' < $*.d > $@; \
@@ -38,5 +41,5 @@ include $(SRCS:.c=.P)
 
 .PHONY: clean
 clean: 
-	rm testhashtable benchmarkhashtable testhashserver hashserver *.o 
+	rm -f testhashtable benchmarkhashtable testhashserver hashserver benchmarkmemcached *.o *.P
 
