@@ -6,4 +6,5 @@ benchmarkhashtable
 hashserver
 testhashserver
 benchmarkhashserver
+benchmarkmemcached
 
