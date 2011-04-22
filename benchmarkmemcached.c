@@ -34,12 +34,13 @@ struct client_data *cdata;
 void run_benchmark();
 void get_random_query(int client_id, struct hash_query *query);
 void * client(void *xargs);
+void * client_multiget(void *xargs);
 
 int main(int argc, char *argv[])
 {
   int opt_char;
 
-  while((opt_char = getopt(argc, argv, "s:n:c:i:m:w:f:d:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:n:c:b:i:m:w:f:d:")) != -1) {
     switch (opt_char) {
       case 's':
         if (strlen(optarg) < 100) {
@@ -116,7 +117,9 @@ void run_benchmark()
   int *thread_id = (int *)malloc(nclients * sizeof(pthread_t));
   for (int i = 0; i < nclients; i++) {
     thread_id[i] = i;
-    r = pthread_create(&cthreads[i], NULL, client, (void *) &thread_id[i]);
+    r = pthread_create(&cthreads[i], NULL, 
+        (design == 1) ? client : client_multiget, 
+        (void *) &thread_id[i]);
     assert(r == 0);
   }
 
@@ -240,6 +243,8 @@ void * client_multiget(void *xargs)
       keys[k] = (char *)&queries[k].key;
       lens[k] = sizeof(long);
     }
+    i += nqueries;
+    nlookup += nqueries;
 
     rc = memcached_mget(memc, (const char * const *)keys, lens, nqueries);
     if (rc != MEMCACHED_SUCCESS) {
@@ -247,30 +252,20 @@ void * client_multiget(void *xargs)
       return NULL;
     }
 
-    for (int k = 0; k < nqueries; k++) {
-      char key[10];
-      size_t key_length;
-      size_t size;
-      uint32_t flags;
-      char *value = memcached_fetch(memc, key, &key_length, &size, &flags, &rc);
-
-      if (rc != MEMCACHED_SUCCESS && rc != MEMCACHED_NOTFOUND && rc != MEMCACHED_END) {
-        printf("Client cid: %d fail: %s\n", c, memcached_strerror(memc, rc));
-        return NULL;
-      } else { 
-        if (rc == MEMCACHED_END) break;
-        nlookup++;
-        assert(key_length == sizeof(long));
-        if (rc != MEMCACHED_NOTFOUND) {
-          nhit++;
-          assert(size == 8);
-          assert(value != NULL);
-          if (memcmp(value, key, sizeof(long)) != 0) {
-            printf("ERROR: invalid value %s, should be %s\n", value, key);
-          }
-          free(value);
-        }
+    char key[10];
+    size_t key_length;
+    size_t size;
+    uint32_t flags;      
+    char *value;
+    while ((value = memcached_fetch(memc, key, &key_length, &size, &flags, &rc)) != NULL) {
+      assert(key_length == sizeof(long));
+      nhit++;
+      assert(size == 8);
+      assert(value != NULL);
+      if (memcmp(value, key, sizeof(long)) != 0) {
+        printf("ERROR: invalid value %s, should be %s\n", value, key);
       }
+      free(value);
     }
   }
   printf("Client cid: %d, nfail: %d, nhit: %d, nlookup: %d\n", c, nfail, nhit, nlookup);
