@@ -15,7 +15,6 @@
 
 #define BUCKET_LOAD       2
 #define SERVER_READ_COUNT BUFFER_FLUSH_COUNT 
-#define ELEM_OVERHEAD     (sizeof(hash_key) + sizeof(struct hash_value))
 #define HASH_INSERT_MASK  0x8000000000000000 
 #define INSERT_MSG_LENGTH 2
 
