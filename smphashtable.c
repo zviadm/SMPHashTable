@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <xmmintrin.h>
 
 #include "alock.h"
 #include "localmem.h"

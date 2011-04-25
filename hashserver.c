@@ -9,7 +9,6 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <xmmintrin.h>
 
 #include "localmem.h"
 #include "smphashtable.h"

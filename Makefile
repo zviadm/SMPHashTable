@@ -1,6 +1,6 @@
 DFLAGS =
 LFLAGS =
-CFLAGS = -std=c99 -Wall -msse2 -D_GNU_SOURCE -fms-extensions -g -O2 $(DFLAGS)
+CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 $(DFLAGS)
 MAKEDEPEND = gcc -M $(CPPFLAGS) -o $*.d $<
 
 SRCS = testhashtable.c benchmarkhashtable.c \

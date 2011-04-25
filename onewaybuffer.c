@@ -1,8 +1,8 @@
 #include <assert.h>
 #include <stdlib.h>
-#include <xmmintrin.h>
 
 #include "onewaybuffer.h"
+#include "util.h"
 
 void buffer_write(struct onewaybuffer* buffer, unsigned long data)
 {

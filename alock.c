@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <assert.h>
-#include <xmmintrin.h>
 
 #include "alock.h"
 #include "util.h"

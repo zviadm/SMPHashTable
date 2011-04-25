@@ -22,5 +22,12 @@ static inline int min(int a, int b)
   else return b; 
 }
 
+// even though this is defined in SSE2 not all
+// cpu's support SSE2 so best is to just avoid
+// SSE2 and do it like this
+static inline void _mm_pause() 
+{
+  __asm __volatile("pause");
+}
 
 #endif

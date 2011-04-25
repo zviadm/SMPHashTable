@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <xmmintrin.h>
 
 #include "hashclient.h"
 #include "smphashtable.h"
@@ -225,17 +224,19 @@ void * client_fast(void *xargs)
 
   while (i < iters_per_client) {
     int nqueries = min(iters_per_client - i, batch_size);
+    int nlookups = 0;
     for (int k = 0; k < nqueries; k++) {
       get_random_query(c, &queries[k]);
       if (queries[k].optype == OPTYPE_INSERT) {
         values[k] = &queries[k].key;
       } else{
-        args.nlookups++;
+        nlookups++;
         values[k] = NULL;
       }
     }
 
     sendqueries(conn, nqueries, queries, values);
+    args.nlookups += nlookups;
     i += nqueries;
   }
 

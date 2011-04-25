@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <xmmintrin.h>
 
 #include <libmemcached/memcached.h>
 
@@ -20,11 +19,14 @@ int batch_size      = 1000;
 int niters          = 100000;
 int query_mask      = 0xFFFFF;
 int first_core      = 0;
+int first_port      = 11212;
 int write_threshold = (0.3f * (double)RAND_MAX);
 char serverip[100]  = "127.0.0.1";
 
 int iters_per_client; 
 memcached_server_st *servers = NULL;
+int total_nlookup;
+int total_nhit;
 
 struct client_data {
   unsigned int seed;
@@ -35,12 +37,13 @@ void run_benchmark();
 void get_random_query(int client_id, struct hash_query *query);
 void * client(void *xargs);
 void * client_multiget(void *xargs);
+void * client_fastmultiget(void *xargs);
 
 int main(int argc, char *argv[])
 {
   int opt_char;
 
-  while((opt_char = getopt(argc, argv, "s:n:c:b:i:m:w:f:d:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:n:c:b:i:m:w:f:d:p:")) != -1) {
     switch (opt_char) {
       case 's':
         if (strlen(optarg) < 100) {
@@ -74,6 +77,9 @@ int main(int argc, char *argv[])
       case 'd':
         design = atoi(optarg);
         break;
+      case 'p':
+        first_port = atoi(optarg);
+        break;
       default:
         printf("benchmark options are: \n"
                "   -s server ip address\n"
@@ -105,12 +111,14 @@ void run_benchmark()
   // add servers
   memcached_return rc;
   for (int i = 0; i < nservers; i++) {
-    servers = memcached_server_list_append(servers, serverip, 11211 + i, &rc);
+    servers = memcached_server_list_append(servers, serverip, first_port + i, &rc);
   }
 
   printf("Benchmark starting..., pid: %d\n", (int)getpid()); 
   // start the clients
   double tstart = now();
+  total_nhit = 0;
+  total_nlookup = 0;
 
   int r;
   pthread_t *cthreads = (pthread_t *)malloc(nclients * sizeof(pthread_t));
@@ -118,8 +126,10 @@ void run_benchmark()
   for (int i = 0; i < nclients; i++) {
     thread_id[i] = i;
     r = pthread_create(&cthreads[i], NULL, 
-        (design == 1) ? client : client_multiget, 
-        (void *) &thread_id[i]);
+        (design == 1) ? client : 
+        (design == 2) ? client_multiget :
+                        client_fastmultiget, 
+        &thread_id[i]);
     assert(r == 0);
   }
 
@@ -133,6 +143,7 @@ void run_benchmark()
 
   printf("Benchmark Done. Total time: %.3f, Iterations: %d\n", 
       tend - tstart, niters);
+  printf("nhit: %d, nlookup: %d, nhit / nlookup: %.3f\n", total_nhit, total_nlookup, (double)total_nhit / total_nlookup);
 
   free(thread_id);
   free(cthreads);
@@ -149,7 +160,7 @@ void get_random_query(int client_id, struct hash_query *query)
   unsigned long r = ((r1 << 16) + r2);
 
   query->optype = optype;
-  query->key = r & query_mask;
+  query->key = (r + 256) & query_mask;
   query->size = 8;
 }
 
@@ -170,7 +181,6 @@ void * client(void *xargs)
     exit(1);
   }
 
-  int nfail = 0;
   int nhit = 0;
   int nlookup = 0;
   struct hash_query query;
@@ -196,16 +206,16 @@ void * client(void *xargs)
           nhit++;
           assert(size == 8);
           assert(value != NULL);
-          long val = *(long*)value;
-          if (val != query.key) {
-            printf("ERROR: invalid value %ld, should be %ld\n", val, query.key);
+          if (memcmp(value, &query.key, sizeof(long)) != 0) {
+            printf("ERROR: invalid value %s, should be %ld\n", value, query.key);
           }
           free(value);
         }
       }
     }
   }
-  printf("Client cid: %d, nfail: %d, nhit: %d, nlookup: %d\n", c, nfail, nhit, nlookup);
+  __sync_fetch_and_add(&total_nhit, nhit);
+  __sync_fetch_and_add(&total_nlookup, nlookup);
 
   memcached_free(memc);
   return NULL;
@@ -228,7 +238,6 @@ void * client_multiget(void *xargs)
     exit(1);
   }
 
-  int nfail = 0;
   int nhit = 0;
   int nlookup = 0;
 
@@ -236,6 +245,7 @@ void * client_multiget(void *xargs)
   char **keys = (char **)memalign(CACHELINE, batch_size * sizeof(char *));
   size_t *lens = (size_t *)memalign(CACHELINE, batch_size * sizeof(size_t));
   int i = 0;
+  int nfail = 0;
   while (i < iters_per_client) {
     int nqueries = min(iters_per_client - i, batch_size);
     for (int k = 0; k < nqueries; k++) {
@@ -252,23 +262,72 @@ void * client_multiget(void *xargs)
       return NULL;
     }
 
-    char key[10];
+    char key[MEMCACHED_MAX_KEY];
     size_t key_length;
     size_t size;
     uint32_t flags;      
     char *value;
     while ((value = memcached_fetch(memc, key, &key_length, &size, &flags, &rc)) != NULL) {
-      assert(key_length == sizeof(long));
+      if (rc != MEMCACHED_SUCCESS) {
+        printf("Client cid: %d fetch fail: %s\n", c, memcached_strerror(memc, rc));
+      }
       nhit++;
-      assert(size == 8);
-      assert(value != NULL);
-      if (memcmp(value, key, sizeof(long)) != 0) {
-        printf("ERROR: invalid value %s, should be %s\n", value, key);
+      assert(key_length == sizeof(long));
+      assert(size == sizeof(long));
+      assert(value != NULL);      
+      if (memcmp(value, key, key_length) != 0) {        
+        printf("ERROR: invalid value %ld, should be %ld\n", *(long *)value, *(long *)key);
       }
       free(value);
     }
   }
-  printf("Client cid: %d, nfail: %d, nhit: %d, nlookup: %d\n", c, nfail, nhit, nlookup);
+  __sync_fetch_and_add(&total_nhit, nhit);
+  __sync_fetch_and_add(&total_nlookup, nlookup);
+
+  memcached_free(memc);
+  return NULL;
+}
+
+void * client_fastmultiget(void *xargs)
+{
+  int c = *(int *)xargs;
+  set_affinity(c + first_core);
+  
+  memcached_return rc;
+  memcached_st *memc; 
+  
+  memc = memcached_create(NULL);
+  memcached_behavior_set(memc, MEMCACHED_BEHAVIOR_BINARY_PROTOCOL, (uint64_t) 1);
+  rc = memcached_server_push(memc, servers);
+
+  if (rc != MEMCACHED_SUCCESS) {
+    printf("Client cid: %d couldn't add server: %s\n", c, memcached_strerror(memc, rc));
+    exit(1);
+  }
+
+  int nlookup = 0;
+
+  struct hash_query *queries = (struct hash_query *)memalign(CACHELINE, batch_size * sizeof(struct hash_query));
+  char **keys = (char **)memalign(CACHELINE, batch_size * sizeof(char *));
+  size_t *lens = (size_t *)memalign(CACHELINE, batch_size * sizeof(size_t));
+  int i = 0;
+
+  while (i < iters_per_client) {
+    int nqueries = min(iters_per_client - i, batch_size);
+    i += nqueries;
+    nlookup += nqueries;
+    for (int k = 0; k < nqueries; k++) {
+      get_random_query(c, &queries[k]);
+      keys[k] = (char *)&queries[k].key;
+      lens[k] = sizeof(long);
+    }
+
+    rc = memcached_mget(memc, (const char * const *)keys, lens, nqueries);
+    if (rc != MEMCACHED_SUCCESS) {
+      printf("Client cid: %d mget fail: %s\n", c, memcached_strerror(memc, rc));
+      return NULL;
+    }
+  }
 
   memcached_free(memc);
   return NULL;
