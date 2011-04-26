@@ -30,7 +30,7 @@
 
 struct mem_block {
   volatile size_t size;
-  volatile unsigned long ref_count;
+  volatile size_t ref_count;
   union {
     struct {
       volatile mem_block_t list_next;

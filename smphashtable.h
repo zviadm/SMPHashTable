@@ -1,12 +1,13 @@
 #ifndef __SMPHASHTABLE_H_
 #define __SMPHASHTABLE_H_
 
+#include <stdint.h>
 #include "util.h"
 
 /**
  * hash_key - Hash table key type
  */
-typedef unsigned long hash_key;
+typedef uint64_t hash_key;
 
 enum optype {
   OPTYPE_LOOKUP = 0,

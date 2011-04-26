@@ -4,7 +4,7 @@
 #include "onewaybuffer.h"
 #include "util.h"
 
-void buffer_write(struct onewaybuffer* buffer, unsigned long data)
+void buffer_write(struct onewaybuffer* buffer, uint64_t data)
 {
   // wait till there is space in buffer
   while (buffer->tmp_wr_index >= buffer->rd_index + ONEWAY_BUFFER_SIZE) {
@@ -18,7 +18,7 @@ void buffer_write(struct onewaybuffer* buffer, unsigned long data)
   }
 }
 
-void buffer_write_all(struct onewaybuffer* buffer, int write_count, const unsigned long* data, int force_flush) 
+void buffer_write_all(struct onewaybuffer* buffer, int write_count, const uint64_t* data, int force_flush) 
 {
   assert(write_count <= ONEWAY_BUFFER_SIZE);
   // wait till there is space in buffer
@@ -42,7 +42,7 @@ void buffer_flush(struct onewaybuffer* buffer)
   buffer->wr_index = buffer->tmp_wr_index;
 }
 
-int buffer_read_all(struct onewaybuffer* buffer, int max_read_count, unsigned long* data)
+int buffer_read_all(struct onewaybuffer* buffer, int max_read_count, uint64_t* data)
 {
   int count = buffer->wr_index - buffer->rd_index;
   if (count == 0) return 0;

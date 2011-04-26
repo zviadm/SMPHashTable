@@ -1,36 +1,31 @@
-DFLAGS =
-LFLAGS =
-CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 $(DFLAGS)
-MAKEDEPEND = gcc -M $(CPPFLAGS) -o $*.d $<
+CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 
+MAKEDEPEND = gcc -M $(CFLAGS) -o $*.d $<
 
-SRCS = testhashtable.c benchmarkhashtable.c \
-			 testhashserver.c benchmarkhashserver.c \
-			 hashserver.c hashclient.c \
-			 smphashtable.c onewaybuffer.c localmem.c \
-			 util.c alock.c ia32msr.c ia32perf.c
+LIBSRC 		= smphashtable.c onewaybuffer.c localmem.c \
+						hashclient.c util.c alock.c ia32msr.c ia32perf.c
+SERVERSRC = hashserver.c hashserver2.c
+TESTSRC 	= testhashtable.c testhashserver.c
+BENCHSRC 	= benchmarkhashtable.c benchmarkhashserver.c \
+						benchhashserver2.c
+SRCS = $(LIBSRC) $(SERVERSRC) $(TESTSRC) $(BENCHSRC) benchmarkmemcached.c
 
-LIB_OBJECTS = hashclient.o smphashtable.o onewaybuffer.o localmem.o \
-	util.o alock.o ia32msr.o ia32perf.o
+LIBOBJS		 	= $(LIBSRC:.c=.o)
+SERVERBINS 	= $(SERVERSRC:.c=)
+TESTBINS 		= $(TESTSRC:.c=)
+BENCHBINS 	= $(BENCHSRC:.c=)
 
-all: testhashtable benchmarkhashtable testhashserver benchmarkhashserver hashserver benchmarkmemcached
+BINS = $(SERVERBINS) $(TESTBINS) $(BENCHBINS) benchmarkmemcached
 
-testhashtable: testhashtable.o $(LIB_OBJECTS)
-	gcc -o testhashtable testhashtable.o  $(LIB_OBJECTS) -lpthread -lm $(LFLAGS) 
+all: $(BINS)
 
-benchmarkhashtable: benchmarkhashtable.o $(LIB_OBJECTS)
-	gcc -o benchmarkhashtable benchmarkhashtable.o  $(LIB_OBJECTS) -lpthread -lm -lprofiler $(LFLAGS)
+$(TESTBINS) $(SERVERBINS): %: %.o $(LIBOBJS)
+	gcc -o $@ $^ -lpthread -lm
 
-testhashserver: testhashserver.o $(LIB_OBJECTS)
-	gcc -o testhashserver testhashserver.o  $(LIB_OBJECTS) -lpthread -lm $(LFLAGS) 
+$(BENCHBINS): %: %.o $(LIBOBJS)
+	gcc -o $@ $^ -lpthread -lm -lprofiler
 
-benchmarkhashserver: benchmarkhashserver.o $(LIB_OBJECTS)
-	gcc -o benchmarkhashserver benchmarkhashserver.o  $(LIB_OBJECTS) -lpthread -lm $(LFLAGS)
-
-hashserver: hashserver.o $(LIB_OBJECTS)
-	gcc -o hashserver hashserver.o  $(LIB_OBJECTS) -lpthread -lm $(LFLAGS) 
-
-benchmarkmemcached: benchmarkmemcached.o $(LIB_OBJECTS)
-	gcc -o benchmarkmemcached benchmarkmemcached.o $(LIB_OBJECTS) /usr/local/lib/libmemcached.a -lpthread -lm $(LFLAGS)
+benchmarkmemcached: benchmarkmemcached.o $(LIBOBJS)
+	gcc -o benchmarkmemcached benchmarkmemcached.o $(LIBOBJS) -Wl,-Bstatic -lmemcached -Wl,-Bdynamic -lpthread -lm
 
 %.P : %.c
 				$(MAKEDEPEND)
@@ -41,5 +36,5 @@ include $(SRCS:.c=.P)
 
 .PHONY: clean
 clean: 
-	rm -f testhashtable benchmarkhashtable testhashserver hashserver benchmarkmemcached *.o *.P
+	rm -f $(BINS) *.o *.P
 

@@ -2,9 +2,11 @@
 *.P
 *.swp
 testhashtable
-benchmarkhashtable
-hashserver
 testhashserver
+benchmarkhashtable
 benchmarkhashserver
+benchhashserver2
+hashserver
+hashserver2
 benchmarkmemcached
 

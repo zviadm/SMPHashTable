@@ -245,7 +245,6 @@ void * client_multiget(void *xargs)
   char **keys = (char **)memalign(CACHELINE, batch_size * sizeof(char *));
   size_t *lens = (size_t *)memalign(CACHELINE, batch_size * sizeof(size_t));
   int i = 0;
-  int nfail = 0;
   while (i < iters_per_client) {
     int nqueries = min(iters_per_client - i, batch_size);
     for (int k = 0; k < nqueries; k++) {
@@ -276,7 +275,7 @@ void * client_multiget(void *xargs)
       assert(size == sizeof(long));
       assert(value != NULL);      
       if (memcmp(value, key, key_length) != 0) {        
-        printf("ERROR: invalid value %ld, should be %ld\n", *(long *)value, *(long *)key);
+        printf("ERROR: invalid value\n");
       }
       free(value);
     }
