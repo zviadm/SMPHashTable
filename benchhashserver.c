@@ -68,7 +68,7 @@ int main(int argc, char *argv[])
         batch_size = atoi(optarg);
         break;
       case 'f':
-        sscanf(optarg, "%d %d", &first_core, &end_core);
+        sscanf(optarg, "%d/%d", &first_core, &end_core);
         break;
       case 'd':
         design = atoi(optarg);
@@ -82,7 +82,7 @@ int main(int argc, char *argv[])
                "   -m log of max hash key\n"
                "   -w hash insert ratio over total number of queries\n"
                "   -b batch size \n"
-               "   -f start_core end_core -- fix to cores [start_core .. end_core]\n"
+               "   -f start_core/end_core -- fix to cores [start_core .. end_core]\n"
                "   -d design -- 1 - blocking, 2 - pipelined, 3 - ver 2.0 blocking\n"
                );
         exit(-1);

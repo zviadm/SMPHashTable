@@ -76,7 +76,7 @@ int main(int argc, char *argv[])
         write_threshold = (int)(atof(optarg) * (double)RAND_MAX);
         break;
       case 'f':
-        sscanf(optarg, "%d %d", &first_core, &end_core);
+        sscanf(optarg, "%d/%d", &first_core, &end_core);
         break;
       case 'd':
         design = atoi(optarg);
@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
                "   -i number of iterations\n"
                "   -m log of max hash key\n"
                "   -w hash insert ratio over total number of queries\n"
-               "   -f start_core end_core -- fix to cores [start_core .. end_core]\n"
+               "   -f start_core/end_core -- fix to cores [start_core .. end_core]\n"
                "   -d design -- 1 - single query, 2 - multi get, 3 - multi get no fetch\n"
                ); 
         exit(-1);
