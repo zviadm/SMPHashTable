@@ -16,9 +16,9 @@
 #include "smphashtable.h"
 #include "util.h"
 
-#define MAX_SOCKETS 128
+#define MAX_SOCKETS       128
 #define VALUE_BUFFER_SIZE (8 * (1024 * 1024))
-#define MAX_VALUE_SIZE (1024 * 1024)
+#define MAX_VALUE_SIZE    (1024 * 1024)
 
 int design          = 2;
 int nservers        = 1;
@@ -27,6 +27,7 @@ int batch_size      = 1000;
 int nelems          = 100000;
 size_t size         = 6400000;
 struct hash_table *hash_table;
+int port            = 2117;
 
 struct hash_value {
   int size;
@@ -61,6 +62,9 @@ int main(int argc, char *argv[])
       case 's':
         nservers = atoi(optarg);
         break;
+      case 'p':
+        port = atoi(optarg);
+        break;
       case 'c':
         nclients = atoi(optarg);
         assert(nclients <= MAX_CLIENTS);
@@ -81,6 +85,7 @@ int main(int argc, char *argv[])
         printf("hash server options are: \n"
                "   -d design (1 = naive server/client, 2 = buffering server/client, 3 = locking)\n"
                "   -s number of servers / partitions\n"
+               "   -p port\n"
                "   -c maximum number of clients\n"
                "   -b batch size\n"
                "   -n max number of elements in cache\n"
@@ -131,13 +136,8 @@ void run_server()
   printf("design: %d, nservers: %d, nclients: %d, partition: %zu(bytes)\n", 
       design, nservers, nclients, stats_get_overhead(hash_table) / nservers);
 
-  // start thread to listen on tcp port
-  pthread_t th;
-  int ret = pthread_create(&th, 0, tcpserver, NULL);
-  assert(ret == 0);
-  pthread_detach(th);
-
   // start client threads
+  int ret;
   for (int i = 0; i < nclients; i++) {
     pthread_t tcpth;
     ret = pthread_create(&tcpth, 0, clientgo, (void *)&cdata[i]);
@@ -145,31 +145,8 @@ void run_server()
     pthread_detach(tcpth);
   }
 
-  while (1) { 
-  }
-
-  // start the interactive mode
-  char cmd[100];
-  while (1) {
-    printf("%%> ");
-    fflush(stdout);
-    char *p = fgets(cmd, 100, stdin);
-    if (p != cmd) {
-      printf("invalid input\n");
-      continue;
-    }
-
-    if ((strcmp(cmd, "stats\n") == 0) || (strcmp(cmd, "s\n") == 0)) {
-      print_stats();
-    } else if ((strcmp(cmd, "reset\n") == 0) || (strcmp(cmd, "r\n") == 0)) {
-      print_stats();
-      stats_reset(hash_table);
-    } else if ((strcmp(cmd, "quit\n") == 0) || (strcmp(cmd, "q\n") == 0)) {
-      break;
-    } else if (strcmp(cmd, "\n") != 0) {
-      printf("unknown command\n");
-    }
-  }
+  // start thread to listen on tcp port
+  tcpserver(NULL);
 
   if (design == 1 || design == 2) {
     stop_hash_table_servers(hash_table);
@@ -185,7 +162,7 @@ void * tcpserver(void *xarg)
 
   bzero(&sin, sizeof(sin));
   sin.sin_family = AF_INET;
-  sin.sin_port = htons(2117);
+  sin.sin_port = htons(port);
 
   // TCP socket and threads
   int s = socket(AF_INET, SOCK_STREAM, 0);
@@ -230,6 +207,11 @@ void * tcpserver(void *xarg)
         cdata[cid].fout[i] = fdopen(s1, "w");
         __sync_fetch_and_add(&cdata[cid].nsockets, 1);
         cdata[cid].sockets[i] = s1;
+
+        if (__sync_add_and_fetch(&active_clients, 1) == 1) {
+          printf("...Running!...\n");
+          start_time = now();
+        }
         //printf("client connected assigned to cid: %d, socketid it: %d\n", cid, i);
         break;
       }
@@ -351,6 +333,14 @@ void * clientgo(void *xarg)
           if (cd->nsockets == 0) {
             //debug and stats
             printf("avg nqueries: %.3f\n", (double)totalnqueries / docnt);
+            docnt = 0;
+            totalnqueries = 0;
+          }
+          if (__sync_sub_and_fetch(&active_clients, 1) == 0) {
+            end_time = now();
+            printf("TIME: %.3f\n", end_time - start_time);
+            print_stats();
+            stats_reset(hash_table);
           }
           //printf("client disconnected cid: %d, socketid it: %d\n", cid, i);
           continue;
