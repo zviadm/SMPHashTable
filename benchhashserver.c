@@ -15,9 +15,11 @@ int nclients        = 1;
 int batch_size      = 1000;
 int niters          = 100000;
 int query_mask      = 0xFFFFF;
-int first_core      = 0;
+int first_core      = -1;
+int end_core        = -1;
 int write_threshold = (0.3f * (double)RAND_MAX);
 char serverip[100]  = "127.0.0.1";
+int port            = 2117;
 
 int iters_per_client; 
 
@@ -31,12 +33,13 @@ void get_random_query(int client_id, struct hash_query *query);
 void * client(void *xargs);
 void * client_fast(void *xargs);
 void * client_fast_receiver(void *xargs);
+void * client2(void *xargs);
 
 int main(int argc, char *argv[])
 {
   int opt_char;
 
-  while((opt_char = getopt(argc, argv, "s:c:i:m:w:b:f:d:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:p:c:i:m:w:b:f:d:")) != -1) {
     switch (opt_char) {
       case 's':
         if (strlen(optarg) < 100) {
@@ -45,6 +48,9 @@ int main(int argc, char *argv[])
           printf("server ip address is too long\n");
           exit(-1);
         }
+        break;
+      case 'p':
+        port = atoi(optarg);
         break;
       case 'c':
         nclients = atoi(optarg);
@@ -62,7 +68,7 @@ int main(int argc, char *argv[])
         batch_size = atoi(optarg);
         break;
       case 'f':
-        first_core = atoi(optarg);
+        sscanf(optarg, "%d %d", &first_core, &end_core);
         break;
       case 'd':
         design = atoi(optarg);
@@ -70,13 +76,15 @@ int main(int argc, char *argv[])
       default:
         printf("benchmark options are: \n"
                "   -s server ip address\n"
+               "   -p port\n"
                "   -c number of clients\n"
-               "   -b batch size \n"
                "   -i number of iterations\n"
                "   -m log of max hash key\n"
                "   -w hash insert ratio over total number of queries\n"
-               "   -f first core to run first client\n"
-               "example './benchmarkhashserver -c 3 -b 1000 -i 100000000 -m 15 -w 0.3'\n");
+               "   -b batch size \n"
+               "   -f start_core end_core -- fix to cores [start_core .. end_core]\n"
+               "   -d design -- 1 - blocking, 2 - pipelined, 3 - ver 2.0 blocking\n"
+               );
         exit(-1);
     }
   }
@@ -105,7 +113,9 @@ void run_benchmark()
   for (int i = 0; i < nclients; i++) {
     thread_id[i] = i;
     r = pthread_create(&cthreads[i], NULL, 
-        (design == 1) ? client : client_fast, 
+        (design == 1) ? client : 
+        (design == 2) ? client_fast :
+                        client2, 
         (void *) &thread_id[i]);
     assert(r == 0);
   }
@@ -143,10 +153,10 @@ void get_random_query(int client_id, struct hash_query *query)
 void * client(void *xargs)
 {
   int c = *(int *)xargs;
-  set_affinity(c + first_core);
+  if (first_core != -1) set_affinity(first_core + c % (end_core - first_core + 1));
   
   hashconn_t conn;
-  if (openconn(&conn, serverip) < 0) {
+  if (openconn(&conn, serverip, port) < 0) {
     printf("failed to connect to server\n");
     return NULL;
   }
@@ -200,10 +210,10 @@ void * client_fast(void *xargs)
 {
   int r;
   int c = *(int *)xargs;
-  set_affinity(c + first_core);
+  if (first_core != -1) set_affinity(first_core + c % (end_core - first_core + 1));
   
   hashconn_t conn;
-  if (openconn(&conn, serverip) < 0) {
+  if (openconn(&conn, serverip, port) < 0) {
     printf("failed to connect to server\n");
     return NULL;
   }
@@ -254,7 +264,7 @@ void * client_fast(void *xargs)
 void * client_fast_receiver(void *xargs)
 {
   struct thread_args *args = (struct thread_args *)xargs;
-  set_affinity(args->id + first_core);
+  if (first_core != -1) set_affinity(first_core + args->id % (end_core - first_core + 1));
   hashconn_t conn = args->conn;
 
   int nreads = 0;
@@ -271,3 +281,53 @@ void * client_fast_receiver(void *xargs)
   }
   return NULL;
 }
+
+void * client2(void *xargs)
+{
+  int c = *(int *)xargs;
+  if (first_core != -1) set_affinity(first_core + c % (end_core - first_core + 1));
+  
+  hashconn_t conn;
+  if (openconn(&conn, serverip, port) < 0) {
+    printf("failed to connect to server\n");
+    return NULL;
+  }
+
+  struct hash_query *queries = (struct hash_query *)memalign(CACHELINE, batch_size * sizeof(struct hash_query));
+  void **values = (void **)memalign(CACHELINE, batch_size * sizeof(void *));
+  int i = 0;
+
+  while (i < iters_per_client) {
+    int nqueries = min(iters_per_client - i, batch_size);
+    for (int k = 0; k < nqueries; k++) {
+      get_random_query(c, &queries[k]);
+      if (queries[k].optype == OPTYPE_INSERT) {
+        values[k] = &queries[k].key;
+      } else{
+        values[k] = NULL;
+      }
+    }
+
+    sendqueries2(conn, nqueries, queries, values);
+ 
+    for (int k = 0; k < nqueries; k++) {
+      if (queries[k].optype == OPTYPE_LOOKUP) {
+        long val;
+        int size = readvalue(conn, &val);
+        if (size != 0) {
+          assert(size == 8);
+          if (val != queries[k].key) {
+            printf("ERROR: invalid value %ld, should be %ld\n", val, queries[k].key);
+          }
+        }
+      }
+    }
+    i += nqueries;
+  }
+
+  free(queries);
+  free(values);
+  closeconn(conn);      
+  return NULL;
+}
+

@@ -18,7 +18,7 @@ struct hashconn {
   FILE * fout;
 };
 
-int openconn(struct hashconn **conn, const char *serverip) 
+int openconn(struct hashconn **conn, const char *serverip, int port) 
 {
   *conn = (struct hashconn *)malloc(sizeof(struct hashconn));
 
@@ -32,7 +32,7 @@ int openconn(struct hashconn **conn, const char *serverip)
 
   memset(&sin, 0, sizeof(sin));
   sin.sin_family = AF_INET;
-  sin.sin_port = htons(2117);
+  sin.sin_port = htons(port);
   sin.sin_addr.s_addr = inet_addr(serverip);
   ret = connect((*conn)->socket, (struct sockaddr *) &sin, sizeof(sin));
   if(ret < 0) {

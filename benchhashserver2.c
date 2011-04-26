@@ -10,14 +10,15 @@
 #include "smphashtable.h"
 #include "util.h"
 
-int design          = 1;
 int nclients        = 1;
 int batch_size      = 1000;
 int niters          = 100000;
 int query_mask      = 0xFFFFF;
-int first_core      = 0;
+int first_core      = -1;
+int end_core        = -1;
 int write_threshold = (0.3f * (double)RAND_MAX);
 char serverip[100]  = "127.0.0.1";
+int port            = 2117;
 
 int iters_per_client; 
 
@@ -34,7 +35,7 @@ int main(int argc, char *argv[])
 {
   int opt_char;
 
-  while((opt_char = getopt(argc, argv, "s:c:i:m:w:b:f:d:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:p:c:i:m:w:b:f:")) != -1) {
     switch (opt_char) {
       case 's':
         if (strlen(optarg) < 100) {
@@ -43,6 +44,9 @@ int main(int argc, char *argv[])
           printf("server ip address is too long\n");
           exit(-1);
         }
+        break;
+      case 'p':
+        port = atoi(optarg);
         break;
       case 'c':
         nclients = atoi(optarg);
@@ -60,21 +64,18 @@ int main(int argc, char *argv[])
         batch_size = atoi(optarg);
         break;
       case 'f':
-        first_core = atoi(optarg);
-        break;
-      case 'd':
-        design = atoi(optarg);
+        sscanf(optarg, "%d %d", &first_core, &end_core);
         break;
       default:
         printf("benchmark options are: \n"
                "   -s server ip address\n"
+               "   -p port\n"
                "   -c number of clients\n"
-               "   -b batch size \n"
                "   -i number of iterations\n"
                "   -m log of max hash key\n"
                "   -w hash insert ratio over total number of queries\n"
-               "   -f first core to run first client\n"
-               "example './benchmarkhashserver -c 3 -b 1000 -i 100000000 -m 15 -w 0.3'\n");
+               "   -b batch size \n"
+               "   -f start_core end_core -- fix to cores [start_core .. end_core]\n");
         exit(-1);
     }
   }
@@ -114,8 +115,7 @@ void run_benchmark()
 
   double tend = now();
 
-  printf("Benchmark Done. Total time: %.3f, Iterations: %d\n", 
-      tend - tstart, niters);
+  printf("Benchmark Done. Total time: %.3f, Iterations: %d\n", tend - tstart, niters);
 
   free(thread_id);
   free(cthreads);
@@ -139,9 +139,10 @@ void get_random_query(int client_id, struct hash_query *query)
 void * client(void *xargs)
 {
   int c = *(int *)xargs;
+  if (first_core != -1) set_affinity(first_core + c % (end_core - first_core + 1));
   
   hashconn_t conn;
-  if (openconn(&conn, serverip) < 0) {
+  if (openconn(&conn, serverip, port) < 0) {
     printf("failed to connect to server\n");
     return NULL;
   }

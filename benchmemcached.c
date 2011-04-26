@@ -18,7 +18,8 @@ int nclients        = 1;
 int batch_size      = 1000;
 int niters          = 100000;
 int query_mask      = 0xFFFFF;
-int first_core      = 0;
+int first_core      = -1;
+int end_core        = -1;
 int first_port      = 11212;
 int write_threshold = (0.3f * (double)RAND_MAX);
 char serverip[100]  = "127.0.0.1";
@@ -43,7 +44,7 @@ int main(int argc, char *argv[])
 {
   int opt_char;
 
-  while((opt_char = getopt(argc, argv, "s:n:c:b:i:m:w:f:d:p:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:p:n:c:b:i:m:w:f:d:")) != -1) {
     switch (opt_char) {
       case 's':
         if (strlen(optarg) < 100) {
@@ -55,6 +56,9 @@ int main(int argc, char *argv[])
         break;
       case 'n':
         nservers = atoi(optarg);
+        break;
+      case 'p':
+        first_port = atoi(optarg);
         break;
       case 'c':
         nclients = atoi(optarg);
@@ -72,24 +76,24 @@ int main(int argc, char *argv[])
         write_threshold = (int)(atof(optarg) * (double)RAND_MAX);
         break;
       case 'f':
-        first_core = atoi(optarg);
+        sscanf(optarg, "%d %d", &first_core, &end_core);
         break;
       case 'd':
         design = atoi(optarg);
         break;
-      case 'p':
-        first_port = atoi(optarg);
-        break;
       default:
         printf("benchmark options are: \n"
                "   -s server ip address\n"
+               "   -p first server port\n"
+               "   -n number of servers\n"
                "   -c number of clients\n"
                "   -b batch size \n"
                "   -i number of iterations\n"
                "   -m log of max hash key\n"
                "   -w hash insert ratio over total number of queries\n"
-               "   -f first core to run first client\n"
-               "example './benchmarkhashserver -c 3 -b 1000 -i 100000000 -m 15 -w 0.3'\n");
+               "   -f start_core end_core -- fix to cores [start_core .. end_core]\n"
+               "   -d design -- 1 - single query, 2 - multi get, 3 - multi get no fetch\n"
+               ); 
         exit(-1);
     }
   }
@@ -160,14 +164,14 @@ void get_random_query(int client_id, struct hash_query *query)
   unsigned long r = ((r1 << 16) + r2);
 
   query->optype = optype;
-  query->key = (r + 256) & query_mask;
+  query->key = r & query_mask;
   query->size = 8;
 }
 
 void * client(void *xargs)
 {
   int c = *(int *)xargs;
-  //set_affinity(c + first_core);
+  if (first_core != -1) set_affinity(first_core + c % (end_core - first_core + 1));
   
   memcached_return rc;
   memcached_st *memc; 
@@ -224,7 +228,7 @@ void * client(void *xargs)
 void * client_multiget(void *xargs)
 {
   int c = *(int *)xargs;
-  set_affinity(c + first_core);
+  if (first_core != -1) set_affinity(first_core + c % (end_core - first_core + 1));
   
   memcached_return rc;
   memcached_st *memc; 
@@ -290,7 +294,7 @@ void * client_multiget(void *xargs)
 void * client_fastmultiget(void *xargs)
 {
   int c = *(int *)xargs;
-  set_affinity(c + first_core);
+  if (first_core != -1) set_affinity(first_core + c % (end_core - first_core + 1));
   
   memcached_return rc;
   memcached_st *memc; 
@@ -327,6 +331,7 @@ void * client_fastmultiget(void *xargs)
       return NULL;
     }
   }
+  __sync_fetch_and_add(&total_nlookup, nlookup);
 
   memcached_free(memc);
   return NULL;

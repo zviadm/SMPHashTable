@@ -12,7 +12,7 @@ void test1()
   printf("Create connection to server...\n");
   
   hashconn_t conn;
-  if (openconn(&conn, "127.0.0.1") < 0) {
+  if (openconn(&conn, "127.0.0.1", 2117) < 0) {
     printf("failed to connect to server\n");
     return;
   }

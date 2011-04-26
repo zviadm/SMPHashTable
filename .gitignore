@@ -3,10 +3,10 @@
 *.swp
 testhashtable
 testhashserver
-benchmarkhashtable
-benchmarkhashserver
+benchhashtable
+benchhashserver
 benchhashserver2
 hashserver
 hashserver2
-benchmarkmemcached
+benchmemcached
 
