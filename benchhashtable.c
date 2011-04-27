@@ -190,10 +190,7 @@ void get_random_query(int client_id, struct hash_query *query)
 {
   enum optype optype = 
     (rand_r(&cdata[client_id].seed) < write_threshold) ? OPTYPE_INSERT : OPTYPE_LOOKUP; 
-
-  unsigned long r1 = rand_r(&cdata[client_id].seed);
-  unsigned long r2 = rand_r(&cdata[client_id].seed);
-  unsigned long r = ((r1 << 16) + r2);
+  unsigned long r = rand_r(&cdata[client_id].seed);
 
   query->optype = optype;
   query->key = r & query_mask;

@@ -266,7 +266,7 @@ void *hash_table_server(void* args)
   struct hash_table *hash_table = ((struct thread_args *) args)->hash_table;
   struct partition *p = &hash_table->partitions[s];
   struct box_array *boxes = hash_table->boxes;
-  unsigned long localbuf[ONEWAY_BUFFER_SIZE + 2];
+  uint64_t localbuf[ONEWAY_BUFFER_SIZE + 2];
   int quitting = 0;
 
   set_affinity(c);
@@ -322,20 +322,20 @@ void *hash_table_server(void* args)
 
 void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key)
 {
-  unsigned long res;
+  uint64_t res;
   int s = hash_get_server(hash_table, key);
-  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 1, (unsigned long*)&key, 1);
+  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 1, (uint64_t *)&key, 1);
 
   while (buffer_read_all(&hash_table->boxes[client_id].boxes[s].out, 1, &res) == 0) {
     _mm_pause();
   }
-  return (void *)res;
+  return (void *)(long)res;
 }
 
 void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, int size)
 {
-  unsigned long res;
-  unsigned long msg_data[INSERT_MSG_LENGTH];
+  uint64_t res;
+  uint64_t msg_data[INSERT_MSG_LENGTH];
   msg_data[0] = (unsigned long)key | HASH_INSERT_MASK;
   msg_data[1] = (unsigned long)size;
 
@@ -344,7 +344,7 @@ void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key ke
   while (buffer_read_all(&hash_table->boxes[client_id].boxes[s].out, 1, &res) == 0) {
     _mm_pause();
   }
-  return (void *)res;
+  return (void *)(long)res;
 }
 
 void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, void **values)
@@ -356,14 +356,14 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
 
   int *localbuf_index = (int*)memalign(CACHELINE, hash_table->nservers * sizeof(int));
   int *localbuf_size = (int*)memalign(CACHELINE, hash_table->nservers * sizeof(int));
-  unsigned long *localbuf = 
-    (unsigned long*)memalign(CACHELINE, hash_table->nservers * ONEWAY_BUFFER_SIZE * sizeof(unsigned long));
+  uint64_t *localbuf = 
+    (uint64_t *)memalign(CACHELINE, hash_table->nservers * ONEWAY_BUFFER_SIZE * sizeof(unsigned long));
   memset(localbuf_index, 0, hash_table->nservers * sizeof(int));
   memset(localbuf_size, 0, hash_table->nservers * sizeof(int));
   memset(localbuf, 0, hash_table->nservers * ONEWAY_BUFFER_SIZE * sizeof(unsigned long));
   
   struct box_array *boxes = hash_table->boxes;
-  unsigned long msg_data[INSERT_MSG_LENGTH];
+  uint64_t msg_data[INSERT_MSG_LENGTH];
   
   for(int i = 0; i < nqueries; i++) {
     int s = hash_get_server(hash_table, queries[i].key); 
@@ -393,7 +393,7 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
         localbuf_size[ps] = count;
       }
 
-      values[pindex] = (void *)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
+      values[pindex] = (void *)(long)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
       pindex++;
       localbuf_index[ps]++;
     }
@@ -428,7 +428,7 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
       localbuf_size[ps] = count;
     }
 
-    values[pindex] = (void *)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
+    values[pindex] = (void *)(long)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
     pindex++;
     localbuf_index[ps]++;
   }
