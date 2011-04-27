@@ -1,4 +1,5 @@
 CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 
+LFLAGS = -lpthread -lm
 MAKEDEPEND = gcc -M $(CFLAGS) -o $*.d $<
 
 LIBSRC 		= smphashtable.c onewaybuffer.c localmem.c \
@@ -17,14 +18,12 @@ BINS = $(SERVERBINS) $(TESTBINS) $(BENCHBINS) benchmemcached
 
 all: $(BINS)
 
-$(TESTBINS) $(SERVERBINS): %: %.o $(LIBOBJS)
-	gcc -o $@ $^ -lpthread -lm
+$(BINS): %: %.o $(LIBOBJS)
+	gcc -o $@ $^ $(LFLAGS)
 
-$(BENCHBINS): %: %.o $(LIBOBJS)
-	gcc -o $@ $^ -lpthread -lm -lprofiler
+benchhashtable: LFLAGS += -lprofiler
 
-benchmemcached: benchmemcached.o $(LIBOBJS)
-	gcc -o benchmemcached benchmemcached.o $(LIBOBJS) -Wl,-Bstatic -lmemcached -Wl,-Bdynamic -lpthread -lm
+benchmemcached: LFLAGS += /usr/local/lib/libmemcached.a
 
 %.P : %.c
 				$(MAKEDEPEND)
