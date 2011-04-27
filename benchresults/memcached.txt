@@ -1,0 +1,61 @@
+Memcached Benches:
+
+Use JOSMP (16 core) as server, TOM (48 core) & UD0 (4 core) as clients.
+
+64 MB memcacheds running on JOSMP
+zvio@josmp:~$ ./runmemcached 3 64
+./memcached-1.4.5/memcached -p 11212 -m 21 &
+./memcached-1.4.5/memcached -p 11213 -m 21 &
+./memcached-1.4.5/memcached -p 11214 -m 21 &
+
+----------------- EMPTY MEMCACHED ------------------------
+Run TOM and UD0 separately first for 100 million operations on empty memcached:
+
+zvio@tom:~$ perflock ./benchmemcached -d 2 -s 192.168.42.10 -n 3 -c 200 -f 0/47 -b 1000 -i 100000000 -m 21 -w 1.0
+Benchmark starting..., pid: 590334
+Benchmark Done. Total time: 25.835, Iterations: 100000000
+nhit: 0, nlookup: 100000000, nhit / nlookup: 0.000
+
+zvio@ud0:~$ ./benchmemcached -d 2 -s 192.168.42.10 -n 3 -c 200 -b 1000 -i 100000000 -m 21 -w 1.0
+Benchmark starting..., pid: 28521
+Benchmark Done. Total time: 27.615, Iterations: 100000000
+nhit: 0, nlookup: 100000000, nhit / nlookup: 0.000
+
+Run TOM and UD0 at the same time to prove Memcached servers are CPU bottlenecked:
+
+zvio@ud0:~$ ./benchmemcached -d 2 -s 192.168.42.10 -n 3 -c 200 -b 1000 -i 100000000 -m 21 -w 1.0
+Benchmark starting..., pid: 28722
+Benchmark Done. Total time: 51.245, Iterations: 100000000
+nhit: 0, nlookup: 100000000, nhit / nlookup: 0.000
+
+zvio@ud0:~$ ./benchmemcached -d 2 -s 192.168.42.10 -n 3 -c 200 -b 1000 -i 100000000 -m 21 -w 1.0
+Benchmark starting..., pid: 28722
+Benchmark Done. Total time: 51.245, Iterations: 100000000
+nhit: 0, nlookup: 100000000, nhit / nlookup: 0.000
+
+----------------- FULL MEMCACHED --------------------------
+Run TOM and UD0 separately first for 10 million operations on empty memcached:
+
+zvio@tom:~$ perflock ./benchmemcached -d 2 -s 192.168.42.10 -n 3 -c 200 -f 0/47 -b 1000 -i 10000000 -m 21 -w 0.0
+Benchmark starting..., pid: 591988
+Benchmark Done. Total time: 8.739, Iterations: 10000000
+nhit: 3282876, nlookup: 10000000, nhit / nlookup: 0.328
+
+zvio@ud0:~$ ./benchmemcached -d 2 -s 192.168.42.10 -n 3 -c 200 -f 0/3 -b 1000 -i 10000000 -m 21 -w 0.0
+Benchmark starting..., pid: 29127
+Benchmark Done. Total time: 8.163, Iterations: 10000000
+nhit: 3273270, nlookup: 10000000, nhit / nlookup: 0.327
+
+Run TOM and UD0 at the same time to prove Memcached servers are CPU bottlenecked:
+
+zvio@tom:~$ perflock ./benchmemcached -d 2 -s 192.168.42.10 -n 3 -c 200 -f 0/47 -b 1000 -i 10000000 -m 21 -w 0.0
+Benchmark starting..., pid: 592194
+Benchmark Done. Total time: 16.626, Iterations: 10000000
+nhit: 3289779, nlookup: 10000000, nhit / nlookup: 0.329
+
+zvio@ud0:~$ ./benchmemcached -d 2 -s 192.168.42.10 -n 3 -c 200 -f 0/3 -b 1000 -i 10000000 -m 21 -w 0.0
+Benchmark starting..., pid: 29328
+Benchmark Done. Total time: 16.917, Iterations: 10000000
+nhit: 3278087, nlookup: 10000000, nhit / nlookup: 0.328
+
+
