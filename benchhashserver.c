@@ -13,8 +13,8 @@
 #include "smphashtable.h"
 #include "util.h"
 
-#define MAX_VALUE_SIZE  16384
-#define MAX_BATCH_SIZE  5000
+#define MAX_VALUE_SIZE  2048
+#define MAX_BATCH_SIZE  1024
 
 int design          = 1;
 int nclients        = 1;
@@ -46,6 +46,7 @@ void get_random_query(int client_id, double write_threshold, size_t minval, size
     enum optype *optype, uint64_t *key, size_t *size, char *value);
 void * client_hashserver2(void *xargs);
 void * client_memcached(void *xargs);
+void * client_memcached_mget(void *xargs);
 
 // Buffer to store values
 struct value_buffer {
@@ -131,7 +132,9 @@ void run_benchmark()
   }
 
   // initialize value buffers
-  valuesbuf = (struct value_buffer *)memalign(CACHELINE, nclients * sizeof(struct value_buffer));
+  if ((design == 1 || design == 2) && write_threshold > 0.0) {
+    valuesbuf = (struct value_buffer *)memalign(CACHELINE, nclients * sizeof(struct value_buffer));
+  }
 
   void * client_func = NULL;
   // initialize clients
@@ -147,7 +150,7 @@ void run_benchmark()
       for (int i = 0; i < nservers; i++) {
         servers = memcached_server_list_append(servers, serverip, port + i, &rc);
       }
-      client_func = (design == 2) ? client_memcached : NULL;
+      client_func = (design == 2) ? client_memcached : client_memcached_mget;
       break;
       }
     default:
@@ -192,7 +195,6 @@ void get_random_query(int client_id, double write_threshold, size_t minval, size
 {
   *optype = (rand_r(&cdata[client_id].seed) < write_threshold * RAND_MAX) ? 1 : 0; 
   *key = rand_r(&cdata[client_id].seed) & query_mask;
-  *size = 0;
   if (*optype == OPTYPE_INSERT) {
     *size = ((rand_r(&cdata[client_id].seed) % (maxval - minval + 1)) + minval) & 0xFFFFFFF8;
     assert(*size > 0);
@@ -300,7 +302,7 @@ void * client_memcached(void *xargs)
         nlookup++;
         if (rc != MEMCACHED_NOTFOUND) {
           nhit++;
-          assert(size % sizeof(uint64_t));
+          assert((size % sizeof(uint64_t)) == 0);
           assert(value != NULL);
           if (memcmp(value, &key, sizeof(uint64_t)) != 0 ||
               memcmp(value + size - sizeof(uint64_t), &key, sizeof(uint64_t) != 0)) {
@@ -318,8 +320,7 @@ void * client_memcached(void *xargs)
   return NULL;
 }
 
-/*
-void * client_multiget(void *xargs)
+void * client_memcached_mget(void *xargs)
 {
   int c = *(int *)xargs;
   if (first_core != -1) set_affinity(first_core + c % (end_core - first_core + 1));
@@ -339,16 +340,17 @@ void * client_multiget(void *xargs)
   int nhit = 0;
   int nlookup = 0;
 
-  struct hash_query *queries = (struct hash_query *)memalign(CACHELINE, batch_size * sizeof(struct hash_query));
-  char **keys = (char **)memalign(CACHELINE, batch_size * sizeof(char *));
-  size_t *lens = (size_t *)memalign(CACHELINE, batch_size * sizeof(size_t));
+  uint64_t keysbuf[MAX_BATCH_SIZE];
+  char *keys[MAX_BATCH_SIZE];
+  size_t lens[MAX_BATCH_SIZE];
   int i = 0;
   while (i < iters_per_client) {
     int nqueries = min(iters_per_client - i, batch_size);
     for (int k = 0; k < nqueries; k++) {
-      get_random_query(c, &queries[k]);
-      keys[k] = (char *)&queries[k].key;
-      lens[k] = sizeof(long);
+      enum optype optype;
+      get_random_query(c, 0.0, 0, 0, &optype, &keysbuf[k], NULL, NULL);
+      lens[k] = sizeof(uint64_t);
+      keys[k] = (char *)&keysbuf[k];
     }
     i += nqueries;
     nlookup += nqueries;
@@ -369,11 +371,12 @@ void * client_multiget(void *xargs)
         printf("Client cid: %d fetch fail: %s\n", c, memcached_strerror(memc, rc));
       }
       nhit++;
-      assert(key_length == sizeof(long));
-      assert(size == sizeof(long));
+      assert(key_length == sizeof(uint64_t));
+      assert((size % sizeof(uint64_t)) == 0);
       assert(value != NULL);      
-      if (memcmp(value, key, key_length) != 0) {        
-        printf("ERROR: invalid value\n");
+      if (memcmp(value, key, sizeof(uint64_t)) != 0 ||
+          memcmp(value + size - sizeof(uint64_t), key, sizeof(uint64_t) != 0)) {
+        printf("ERROR: on iter %d, invalid value\n", i);
       }
       free(value);
     }
@@ -384,4 +387,3 @@ void * client_multiget(void *xargs)
   memcached_free(memc);
   return NULL;
 }
-*/

@@ -68,7 +68,7 @@ int sendquery_(struct hashconn *conn, struct client_query *query)
   r = fwrite(&q, sizeof(struct hash_query), 1, conn->fout);
   if (r != 1) return 0;
 
-  if (query->size > 0 && query->optype == OPTYPE_INSERT) {
+  if (query->optype == OPTYPE_INSERT && query->size > 0) {
     r = fwrite(query->value, 1, query->size, conn->fout);
     if (r != query->size) return 0;
   }
