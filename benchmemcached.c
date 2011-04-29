@@ -8,7 +8,6 @@
 
 #include <libmemcached/memcached.h>
 
-#include "hashclient.h"
 #include "smphashtable.h"
 #include "util.h"
 
@@ -112,12 +111,6 @@ void run_benchmark()
     cdata[i].seed = rand();
   }
  
-  // add servers
-  memcached_return rc;
-  for (int i = 0; i < nservers; i++) {
-    servers = memcached_server_list_append(servers, serverip, first_port + i, &rc);
-  }
-
   printf("Benchmark starting..., pid: %d\n", (int)getpid()); 
   // start the clients
   double tstart = now();

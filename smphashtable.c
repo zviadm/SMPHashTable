@@ -7,6 +7,7 @@
 #include <sys/queue.h>
 
 #include "alock.h"
+#include "hashprotocol.h"
 #include "localmem.h"
 #include "onewaybuffer.h"
 #include "smphashtable.h"
@@ -445,8 +446,10 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
   void *value = NULL;
   int extra;
   anderson_acquire(&hash_table->partitions[s].lock, &extra);
+  hash_table->partitions[s].nlookups++;
   struct elem *e = hash_lookup(&hash_table->partitions[s], key);
   if (e != NULL && localmem_is_ready(e->value)) {
+    hash_table->partitions[s].nhits++;
     value = e->value;
     localmem_retain(e->value);
   }
@@ -460,6 +463,7 @@ void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size
   void *value = NULL;
   int extra;
   anderson_acquire(&hash_table->partitions[s].lock, &extra);
+  hash_table->partitions[s].ninserts++;
   struct elem *e = hash_insert(&hash_table->partitions[s], key, size);
   if (e != NULL) {
     value = e->value;

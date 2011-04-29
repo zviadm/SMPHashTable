@@ -2,28 +2,27 @@ CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2
 LFLAGS = -lpthread -lm
 MAKEDEPEND = gcc -M $(CFLAGS) -o $*.d $<
 
-LIBSRC 		= smphashtable.c onewaybuffer.c localmem.c \
-						hashclient.c util.c alock.c ia32msr.c ia32perf.c
-SERVERSRC = hashserver.c hashserver2.c
-TESTSRC 	= testhashtable.c testhashserver.c
-BENCHSRC 	= benchhashtable.c benchhashserver.c 
-SRCS = $(LIBSRC) $(SERVERSRC) $(TESTSRC) $(BENCHSRC) benchmemcached.c
+LIBSRC = smphashtable.c onewaybuffer.c localmem.c \
+				 util.c alock.c ia32msr.c ia32perf.c
+SRCS = $(LIBSRC) \
+			 testhashtable.c \
+			 benchhashtable.c \
+			 hashserver2.c \
+			 hashclient.c	\
+			 benchhashserver.c
 
-LIBOBJS		 	= $(LIBSRC:.c=.o)
-SERVERBINS 	= $(SERVERSRC:.c=)
-TESTBINS 		= $(TESTSRC:.c=)
-BENCHBINS 	= $(BENCHSRC:.c=)
-
-BINS = $(SERVERBINS) $(TESTBINS) $(BENCHBINS) benchmemcached
+LIBOBJS = $(LIBSRC:.c=.o)
+BINS = testhashtable benchhashtable hashserver2 benchhashserver
 
 all: $(BINS)
 
-$(BINS): %: %.o $(LIBOBJS)
+hashserver2 testhashtable benchhashtable: %: %.o $(LIBOBJS)
 	gcc -o $@ $^ $(LFLAGS)
 
 benchhashtable: LFLAGS += -lprofiler
 
-benchmemcached: LFLAGS += /usr/local/lib/libmemcached.a
+benchhashserver: %: %.o util.o hashclient.o
+	gcc -o $@ $^ /usr/local/lib/libmemcached.a $(LFLAGS)
 
 %.P : %.c
 				$(MAKEDEPEND)

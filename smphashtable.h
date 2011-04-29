@@ -1,30 +1,8 @@
 #ifndef __SMPHASHTABLE_H_
 #define __SMPHASHTABLE_H_
 
-#include <stdint.h>
+#include "hashprotocol.h"
 #include "util.h"
-
-/**
- * hash_key - Hash table key type
- */
-typedef uint64_t hash_key;
-
-enum optype {
-  OPTYPE_LOOKUP = 0,
-  OPTYPE_INSERT = 1
-};
-
-/**
- * struct hash_query - Hash table query
- * @optype: 0 - lookup, 1 - insert
- * @size: size of data to insert
- * @key: key to lookup or insert
- */
-struct hash_query {
-  enum optype optype;
-  int size;
-  hash_key key;
-};
 
 /**
  * struct hash_table

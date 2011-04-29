@@ -10,7 +10,7 @@
 #include <unistd.h>
 
 #include "hashclient.h"
-#include "smphashtable.h"
+#include "hashprotocol.h"
 
 struct hashconn {
   int socket;
@@ -55,41 +55,42 @@ void closeconn(struct hashconn *conn)
   free(conn);
 }
 
-void sendqueries(struct hashconn *conn, int nqueries, struct hash_query *queries, void **values)
+int sendquery_(struct hashconn *conn, struct client_query *query)
 {
   size_t r;
-  assert(conn != NULL);
-  assert(conn->fout != NULL);
+  if (conn == NULL || conn->fout == NULL) return 0;
 
-  r = fwrite(&nqueries, sizeof(int), 1, conn->fout);
-  assert(r == 1);
-  r = fwrite(queries, sizeof(struct hash_query), nqueries, conn->fout); 
-  assert(r == nqueries);
-  fflush(conn->fout);
-  for (int i = 0; i < nqueries; i++) {
-    if (queries[i].optype == OPTYPE_INSERT) {
-      r = fwrite(values[i], 1, queries[i].size, conn->fout);
-      assert(r == queries[i].size);
-    }
+  struct hash_query q;
+  q.optype = query->optype;
+  q.size   = query->size;
+  q.key    = query->key;
+
+  r = fwrite(&q, sizeof(struct hash_query), 1, conn->fout);
+  if (r != 1) return 0;
+
+  if (query->size > 0 && query->optype == OPTYPE_INSERT) {
+    r = fwrite(query->value, 1, query->size, conn->fout);
+    if (r != query->size) return 0;
   }
-  fflush(conn->fout);
+  return 1;
 }
 
-void sendqueries2(struct hashconn *conn, int nqueries, struct hash_query *queries, void **values)
+int sendquery(struct hashconn *conn, struct client_query *query)
 {
-  size_t r;
-  assert(conn != NULL);
-  assert(conn->fout != NULL);
+  int r = sendquery_(conn, query);
+  if (r) fflush(conn->fout);
+  return r;
+}
 
+int sendqueries(struct hashconn *conn, int nqueries, struct client_query *queries)
+{
+  int r;
   for (int i = 0; i < nqueries; i++) {
-    r = fwrite(&queries[i], sizeof(struct hash_query), 1, conn->fout);
-    assert(r == 1);
-    if (queries[i].optype == OPTYPE_INSERT) {
-      r = fwrite(values[i], 1, queries[i].size, conn->fout);
-      assert(r == queries[i].size);
-    }
+    r = sendquery_(conn, &queries[i]);
+    if (r == 0) return r;
   }
   fflush(conn->fout);
+  return 1;
 }
 
 int readvalue(struct hashconn *conn, void *value)
@@ -98,13 +99,13 @@ int readvalue(struct hashconn *conn, void *value)
   assert(conn != NULL);
   assert(conn->fin != NULL);
 
-  int size;
-  r = fread(&size, sizeof(int), 1, conn->fin);
-  assert(r == 1);
+  uint32_t size;
+  r = fread(&size, sizeof(uint32_t), 1, conn->fin);
+  if (r != 1) return -1;
 
   if (size > 0) {
     r = fread(value, 1, size, conn->fin);
-    assert(r == size);
+    if (r != size) return -1;
   }
-  return size;
+  return (int)size;
 }

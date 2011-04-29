@@ -1,7 +1,7 @@
 #ifndef __HASHCLIENT_H_
 #define __HASHCLIENT_H_
 
-#include "smphashtable.h"
+#include "hashprotocol.h"
 
 /**
  * handler for connection to hash table server
@@ -19,14 +19,14 @@ int openconn(hashconn_t *conn, const char *serverip, int port);
 void closeconn(hashconn_t conn);
 
 /**
- * Send queries to hash server as batch. This works with first version of hash server
+ * Send single query to hash server.
  */
-void sendqueries(hashconn_t conn, int nqueries, struct hash_query *queries, void **values);
+int sendquery(hashconn_t conn, struct client_query *query);
 
 /**
- * Send queries to hash server. This works with second version of hash server
+ * Send queries to hash server as batch.
  */
-void sendqueries2(struct hashconn *conn, int nqueries, struct hash_query *queries, void **values);
+int sendqueries(hashconn_t conn, int nqueries, struct client_query *queries);
 
 /**
  * Read value received from server, values are received in same order as queries are sent
