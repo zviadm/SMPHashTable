@@ -12,11 +12,11 @@ SRCS = $(LIBSRC) \
 			 benchhashserver.c
 
 LIBOBJS = $(LIBSRC:.c=.o)
-BINS = testhashtable benchhashtable hashserver2 benchhashserver
+BINS = testhashtable benchhashtable hashserver2 hashserver3 benchhashserver
 
 all: $(BINS)
 
-hashserver2 testhashtable benchhashtable: %: %.o $(LIBOBJS)
+hashserver2 hashserver3 testhashtable benchhashtable: %: %.o $(LIBOBJS)
 	gcc -o $@ $^ $(LFLAGS)
 
 benchhashtable: LFLAGS += -lprofiler
