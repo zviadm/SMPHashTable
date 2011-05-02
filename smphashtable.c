@@ -15,7 +15,10 @@
 
 #define BUCKET_LOAD       2
 #define SERVER_READ_COUNT BUFFER_FLUSH_COUNT 
-#define HASH_INSERT_MASK  0x8000000000000000 
+
+#define HASHOP_MASK       0xF000000000000000
+#define HASHOP_LOOKUP     0x0000000000000000 
+#define HASHOP_INSERT     0x1000000000000000 
 #define INSERT_MSG_LENGTH 2
 
 /**
@@ -288,27 +291,37 @@ void *hash_table_server(void* args)
       while (k < count) {
         value = 0;
 
-        if (localbuf[k] & HASH_INSERT_MASK) {
-          if (k + INSERT_MSG_LENGTH > count) {
-            // handle scenario when hash insert message gets cut off 
-            int tmpcnt = 
-              buffer_read_all(&boxes[i].boxes[s].in, k + INSERT_MSG_LENGTH - count, &localbuf[count]);
-            assert(tmpcnt == k + INSERT_MSG_LENGTH - count);
-          }
-            
-          p->ninserts++;
-          e = hash_insert(p, localbuf[k] & (HASH_INSERT_MASK - 1), localbuf[k + 1]);
-          if (e != NULL) value = (unsigned long)e->value;
-          k += INSERT_MSG_LENGTH;
-        } else {
-          p->nlookups++;
-          e = hash_lookup(p, localbuf[k]);          
-          if ((e != NULL) && (localmem_is_ready(e->value))) {
-            p->nhits++;
-            value = (unsigned long)e->value;
-            localmem_retain(e->value);
-          }
-          k++;
+        switch (localbuf[k] & HASHOP_MASK) {
+          case HASHOP_LOOKUP:
+            {
+              p->nlookups++;
+              e = hash_lookup(p, localbuf[k] & (HASHOP_MASK - 1));          
+              if ((e != NULL) && (localmem_is_ready(e->value))) {
+                p->nhits++;
+                value = (unsigned long)e->value;
+                localmem_retain(e->value);
+              }
+              k++;
+              break;
+            }
+          case HASHOP_INSERT:
+            {
+              if (k + INSERT_MSG_LENGTH > count) {
+                // handle scenario when hash insert message gets cut off 
+                int tmpcnt = 
+                  buffer_read_all(&boxes[i].boxes[s].in, k + INSERT_MSG_LENGTH - count, &localbuf[count]);
+                assert(tmpcnt == k + INSERT_MSG_LENGTH - count);
+              }
+
+              p->ninserts++;
+              e = hash_insert(p, localbuf[k] & (HASHOP_MASK - 1), localbuf[k + 1]);
+              if (e != NULL) value = (unsigned long)e->value;
+              k += INSERT_MSG_LENGTH;
+              break;
+            }
+          default:
+            assert(0);
+            break;
         }
 
         localbuf[j] = value;
@@ -324,7 +337,7 @@ void *hash_table_server(void* args)
 void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key)
 {
   uint64_t res;
-  int s = hash_get_server(hash_table, key);
+  int s = hash_get_server(hash_table, key | HASHOP_LOOKUP);
   buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 1, (uint64_t *)&key, 1);
 
   while (buffer_read_all(&hash_table->boxes[client_id].boxes[s].out, 1, &res) == 0) {
@@ -337,7 +350,7 @@ void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key ke
 {
   uint64_t res;
   uint64_t msg_data[INSERT_MSG_LENGTH];
-  msg_data[0] = (unsigned long)key | HASH_INSERT_MASK;
+  msg_data[0] = (unsigned long)key | HASHOP_INSERT;
   msg_data[1] = (unsigned long)size;
 
   int s = hash_get_server(hash_table, key);
@@ -399,14 +412,18 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
       localbuf_index[ps]++;
     }
 
-    if (queries[i].optype == OPTYPE_LOOKUP) {
-      buffer_write(&boxes[client_id].boxes[s].in, queries[i].key);
-    } else if (queries[i].optype == OPTYPE_INSERT) {
-      msg_data[0] = (unsigned long)queries[i].key | HASH_INSERT_MASK;
-      msg_data[1] = (unsigned long)queries[i].size;
-      buffer_write_all(&boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data, 0);
-    } else {
-      assert(0);
+    switch (queries[i].optype) {
+      case OPTYPE_LOOKUP:
+        buffer_write(&boxes[client_id].boxes[s].in, queries[i].key | HASHOP_LOOKUP);
+        break;
+      case OPTYPE_INSERT:
+        msg_data[0] = (unsigned long)queries[i].key | HASHOP_INSERT;
+        msg_data[1] = (unsigned long)queries[i].size;
+        buffer_write_all(&boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data, 0);
+        break;
+      default:
+        assert(0);
+        break;
     }
     pending_count[s]++;
   }
@@ -497,6 +514,7 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size)
   if (e != NULL) {
     p->size -= e->size;
     localmem_release(e->value, 0);
+    e->value = NULL;
   } else if ((e == NULL) && (TAILQ_FIRST(&p->free) == NULL)) {
     struct elem *l = TAILQ_LAST(&p->lru, lrulist);
     assert(l);
@@ -513,6 +531,10 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size)
     struct elem *l = TAILQ_LAST(&p->lru, lrulist);
     assert(l);
     hash_remove(p, l);
+
+    // very obscure case when old item with same key gets 
+    // removed while allocating new space
+    if (l == e) e = NULL;
   }
 
   if (e == NULL) {
@@ -536,7 +558,7 @@ void hash_remove(struct partition *p, struct elem *e)
   TAILQ_REMOVE(eh, e, chain);
   TAILQ_REMOVE(&p->lru, e, lru);
   p->size -= e->size;
-  localmem_release(e->value, 0);
+  if (e->value != NULL) localmem_release(e->value, 0);
   TAILQ_INSERT_TAIL(&p->free, e, free);
 }
 

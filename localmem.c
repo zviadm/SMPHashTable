@@ -25,12 +25,12 @@
 #define MAX_BRUTE_SEARCH 10
 
 /* Until first write, newly allocated block is not ready to be read */
-#define UNUSED_BLOCK_REFCOUNT 0x8000000000000000
+#define USED_BLOCK_REFCOUNT   0x8000000000000000
 #define DATA_READY_MASK       0x4000000000000000
 
 struct mem_block {
   volatile size_t size;
-  volatile size_t ref_count;
+  volatile uint64_t ref_count;
   union {
     struct {
       volatile mem_block_t list_next;
@@ -166,6 +166,16 @@ void localmem_destroy(struct localmem *mem)
   localmem_free_all(mem);
 
   // make sure all blocks are free at the end
+#if 0
+  if (((mem_block_t)mem->startaddr)->size != (mem->endaddr - mem->startaddr)) {
+    mem_block_t b = (mem_block_t)mem->startaddr;
+    while (b != NULL) {
+      printf("%zu - %lx, ", b->size, b->ref_count);
+      b = get_adjacent_next(mem, b);
+    }
+    printf("\n");
+  }
+#endif
   assert(((mem_block_t)mem->startaddr)->size == (mem->endaddr - mem->startaddr));
   assert(((mem_block_t)mem->startaddr)->ref_count == 0);
 
@@ -224,7 +234,7 @@ void* localmem_alloc(struct localmem *mem, size_t size)
   }
 
   dst->mem = mem;
-  dst->ref_count = UNUSED_BLOCK_REFCOUNT | DATA_READY_MASK | 1; // put the block in use
+  dst->ref_count = USED_BLOCK_REFCOUNT | DATA_READY_MASK | 1; // put the block in use
   mem->memused += dst->size;
 
   mm_check(mem);
@@ -237,6 +247,7 @@ void localmem_free(struct localmem *mem, void *ptr)
 
   // Get Block, and both adjacent blocks
   mem_block_t block = get_block_from_data_ptr(ptr);
+  assert(block->ref_count == USED_BLOCK_REFCOUNT);
   mem_block_t prev_block = get_adjacent_prev(mem, block);
   mem_block_t next_block = get_adjacent_next(mem, block);
 
@@ -268,8 +279,8 @@ void localmem_free_all(struct localmem *mem)
 {
   mm_check(mem);
 
-  mem_block_t block = __sync_fetch_and_and(&mem->async_free_list, 0);
-  while (block != NULL) {
+  mem_block_t block = __sync_fetch_and_and(&mem->async_free_list, 0x0);
+  while (block != 0x0) {
     mem_block_t next = block->async_list_next;
     localmem_free(mem, (void *)block->data_ptr);
     block = next;
@@ -298,8 +309,8 @@ void localmem_retain(void *ptr)
 void localmem_release(void *ptr, int async_free)
 {
   mem_block_t block = get_block_from_data_ptr(ptr);
-  unsigned long ref_count = __sync_sub_and_fetch(&(block->ref_count), 1);
-  if (ref_count == UNUSED_BLOCK_REFCOUNT) {
+  uint64_t ref_count = __sync_sub_and_fetch(&(block->ref_count), 1);
+  if (ref_count == USED_BLOCK_REFCOUNT) {
     if (async_free == 0) {
       localmem_free(block->mem, ptr);
     } else {
@@ -311,8 +322,8 @@ void localmem_release(void *ptr, int async_free)
 void localmem_mark_ready(void *ptr)
 {
   mem_block_t block = get_block_from_data_ptr(ptr);
-  unsigned long ref_count = __sync_and_and_fetch(&(block->ref_count), UNUSED_BLOCK_REFCOUNT | (DATA_READY_MASK - 1));
-  if (ref_count == UNUSED_BLOCK_REFCOUNT) {
+  uint64_t ref_count = __sync_and_and_fetch(&(block->ref_count), (USED_BLOCK_REFCOUNT | (DATA_READY_MASK - 1)));
+  if (ref_count == USED_BLOCK_REFCOUNT) {
     localmem_async_free(block->mem, ptr);
   }
 }

@@ -41,9 +41,9 @@ struct client_data {
   int core;
   volatile int nsockets;
   volatile int sockets[MAX_SOCKETS];
-  volatile FILE * fin[MAX_SOCKETS];
+  volatile FILE *fin[MAX_SOCKETS];
   int writeiov_cnt[MAX_SOCKETS];
-  struct iovec writeiov[MAX_SOCKETS][1024]; // TODO: dynamically allocate this dude
+  struct iovec *writeiov[MAX_SOCKETS]; // TODO: dynamically allocate this dude
 };
 
 struct client_data cdata[MAX_CLIENTS];
@@ -139,6 +139,10 @@ void run_server()
     for (int k = 0; k < MAX_SOCKETS; k++) {
       cdata[i].sockets[k] = -1;
     }
+
+    for (int k = 0; k < MAX_SOCKETS; k++) {
+      cdata[i].writeiov[k] = (struct iovec *)memalign(CACHELINE, batch_size * sizeof(struct iovec));
+    }
   }
 
   printf("Starting Hash Server...\n"); 
@@ -157,6 +161,11 @@ void run_server()
   // start thread to listen on tcp port
   tcpserver(NULL);
 
+  for (int i = 0; i < nclients; i++) {
+    for (int k = 0; k < MAX_SOCKETS; k++) {
+      free(cdata[i].writeiov[k]);
+    }
+  }
   if (design == 1 || design == 2) {
     stop_hash_table_servers(hash_table);
   } 
@@ -215,7 +224,7 @@ void * tcpserver(void *xarg)
         printf("...Running!...\n");
         start_time = now();
       }
-    } else {
+    } else if (verbose > 0) {
       printf("ERROR: client %d failed to open socket %d\n", cid, s1);
     }
   }
@@ -419,7 +428,9 @@ void * clientgo(void *xarg)
               }
               break;
             default:
-              printf("ERROR: client %d received invalid query from socket: %d\n", cid, cd->sockets[i]);
+              if (verbose > 0) {
+                printf("ERROR: client %d received invalid query from socket: %d\n", cid, cd->sockets[i]);
+              }
               r = 2;
               break;
           }
@@ -456,16 +467,20 @@ void * clientgo(void *xarg)
       }
     }
 
-    // debug and stats
-    totalnqueries += nqueries;
-    docnt++;
+    if (verbose > 0) {
+      // debug and stats
+      totalnqueries += nqueries;
+      docnt++;
 
-    // perform all queries
-    //struct timespec tmpst, tmpet;
-    //clock_gettime(CLOCK_MONOTONIC, /*CLOCK_THREAD_CPUTIME_ID,*/ &tmpst);
-    doqueries(cid, nqueries, queries, values);  
-    //clock_gettime(CLOCK_MONOTONIC, /*CLOCK_THREAD_CPUTIME_ID,*/ &tmpet);
-    //totalclock += (tmpet.tv_sec - tmpst.tv_sec) * 1000000000 + (tmpet.tv_nsec - tmpst.tv_nsec);
+      // perform all queries
+      struct timespec tmpst, tmpet;
+      clock_gettime(CLOCK_MONOTONIC, /*CLOCK_THREAD_CPUTIME_ID,*/ &tmpst);
+      doqueries(cid, nqueries, queries, values);  
+      clock_gettime(CLOCK_MONOTONIC, /*CLOCK_THREAD_CPUTIME_ID,*/ &tmpet);
+      totalclock += (tmpet.tv_sec - tmpst.tv_sec) * 1000000000 + (tmpet.tv_nsec - tmpst.tv_nsec);
+    } else {
+      doqueries(cid, nqueries, queries, values);  
+    }
 
     // handle values returned after completeing all the queries
     // this loop must go through every returned value, even if
@@ -514,7 +529,7 @@ void * clientgo(void *xarg)
         r = write_iovs(cd->sockets[k], cd->writeiov[k], cd->writeiov_cnt[k]);
         cd->writeiov_cnt[k] = 0;
 
-        if (r == 2) {
+        if (verbose > 0 && r == 2) {
           printf("ERROR: client %d failed to write to socket: %d\n", cid, cd->sockets[k]);
         }
       }

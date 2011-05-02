@@ -119,18 +119,19 @@ void run_benchmark()
   ProfilerStart("cpu.info"); 
   double tstart = now();
 
-  for (int i = 0; i < 6; i++) {
+  const int totalcpus = (design == 1 || design == 2) ? nservers + nclients : nclients;
+  for (int i = 0; i < totalcpus; i++) {
     // Event Select values for each pmc
-    // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits)
-    if (StartCounter(i, 0, 0x00610224) != 0) {
-      //printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
-      //       " and are running benchmark with sudo privileges\n", i);
+    // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits);w
+    if (StartCounter(i, 0, 0x00410224) != 0) {
+      printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
+             " and are running benchmark with sudo privileges\n", i);
     }
     ReadCounter(i, 0, &pmclast[i]);
   }
 
   if (design == 1 || design == 2) {
-    start_hash_table_servers(hash_table, first_core);
+    start_hash_table_servers(hash_table, nclients);
   }
 
   int r;
@@ -155,11 +156,19 @@ void run_benchmark()
     stop_hash_table_servers(hash_table);
   }
 
-  double totalpmc = 0;
-  for (int i = 0; i < 6; i++) {
+  double clients_totalpmc = 0;
+  double servers_totalpmc = 0;
+  for (int i = 0; i < nclients; i++) {
     uint64_t tmp;
     ReadCounter(i, 0, &tmp);
-    totalpmc += tmp - pmclast[i];
+    clients_totalpmc += tmp - pmclast[i];
+  }
+  if (design == 1 || design == 2) {
+    for (int i = nclients; i < nclients + nservers; i++) {
+      uint64_t tmp;
+      ReadCounter(i, 0, &tmp);
+      servers_totalpmc += tmp - pmclast[i];
+    }
   }
 
   double tend = now();
@@ -170,7 +179,8 @@ void run_benchmark()
       design, tend - tstart, niters);
   printf("nservers: %d, nclients: %d, partition overhead: %zu(bytes), nhits / niters: %.3f\n", 
       nservers, nclients, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / niters);
-  printf("L2 Misses per iteration: %.3f\n", totalpmc / niters);
+  printf("L2 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
+      clients_totalpmc / niters, servers_totalpmc / niters, (clients_totalpmc + servers_totalpmc) / niters);
 
 #if 0
   double avg, stddev;
@@ -194,29 +204,25 @@ void get_random_query(int client_id, struct hash_query *query)
 
   query->optype = optype;
   query->key = r & query_mask;
+  query->size = 0;
   if (optype == OPTYPE_INSERT) {
     query->size = 8;
   }
 }
 
-void handle_query_result(struct hash_query *query, void * value)
+void handle_query_result(struct hash_query *query, void *value)
 {
-  long * val = value;
+  long *val = value;
   if (query->optype == OPTYPE_LOOKUP) {
     if (val != NULL) {
-      assert(val[0] == query->key);
-//      for (int i = 1; i < 1024 / 8; i++) {
-//        if (val[i] != rand_data[i - 1]) {
-//          printf("%d %ld %ld\n", i, val[i], rand_data[i - 1]);
-//        }
-//        assert(val[i] == rand_data[i-1]);
-//      }
+      if (val[0] != query->key) {
+        printf("ERROR: values do not match: %ld, should be %ld\n", val[0], query->key);
+      }
       localmem_release(val, 1);     
     }
   } else {
     assert(val != NULL);
     val[0] = query->key;
-//    memcpy(&val[1], rand_data, 1024 - 8);
     localmem_mark_ready(val);
   }
 }
@@ -258,6 +264,7 @@ void * client_design2(void *args)
     int nqueries = min(iters_per_client - i, batch_size);
     for (int k = 0; k < nqueries; k++) {
       get_random_query(c, &queries[k]);
+      values[k] = 0;
     }
     smp_hash_doall(hash_table, cid, nqueries, queries, values);
 
