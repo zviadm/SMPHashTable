@@ -481,7 +481,7 @@ struct elem * hash_lookup(struct partition *p, hash_key key)
   struct elem *e = TAILQ_FIRST(eh);
   while (e != NULL) {
     if (e->key == key) {
-      lru(p, e);
+      //lru(p, e);
       return e;
     }
     e = TAILQ_NEXT(e, chain);

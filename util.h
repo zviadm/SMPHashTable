@@ -4,7 +4,7 @@
 #include <sys/types.h>
 
 #define CACHELINE   64 
-#define MAX_CLIENTS 100
+#define MAX_CLIENTS 128
 
 pid_t gettid(void);
 void set_affinity(int cpu_id);

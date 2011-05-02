@@ -110,7 +110,7 @@ int main(int argc, char *argv[])
                "   -w hash insert ratio over total number of queries\n"
                "   -b batch size \n"
                "   -f start_core/end_core -- fix to cores [start_core .. end_core]\n"
-               "   -d design -- 1 - blocking, 2 - pipelined, 3 - ver 2.0 blocking\n"
+               "   -d design -- 1 - key/value store, 2 - memcached\n"
                );
         exit(-1);
     }
@@ -143,14 +143,13 @@ void run_benchmark()
       client_func = client_hashserver2;
       break;
     case 2: 
-    case 3:
       {      
       // add servers
       memcached_return rc;
       for (int i = 0; i < nservers; i++) {
         servers = memcached_server_list_append(servers, serverip, port + i, &rc);
       }
-      client_func = (design == 2) ? client_memcached : client_memcached_mget;
+      client_func = (write_threshold == 0.0 && batch_size > 1) ? client_memcached_mget : client_memcached;
       break;
       }
     default:
@@ -193,7 +192,7 @@ void run_benchmark()
 void get_random_query(int client_id, double write_threshold, size_t minval, size_t maxval,
     enum optype *optype, uint64_t *key, size_t *size, char *value)
 {
-  *optype = (rand_r(&cdata[client_id].seed) < write_threshold * RAND_MAX) ? 1 : 0; 
+  *optype = (rand_r(&cdata[client_id].seed) < write_threshold * RAND_MAX) ? OPTYPE_INSERT : OPTYPE_LOOKUP; 
   *key = rand_r(&cdata[client_id].seed) & query_mask;
   if (*optype == OPTYPE_INSERT) {
     *size = ((rand_r(&cdata[client_id].seed) % (maxval - minval + 1)) + minval) & 0xFFFFFFF8;

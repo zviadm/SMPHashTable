@@ -7,7 +7,7 @@
 void anderson_init(struct alock *al, int nthread)
 {
   assert(al);
-  assert(nthread < MAX_CLIENTS);
+  assert(nthread <= MAX_CLIENTS);
   al->has_lock[0].x = 1;
   al->nthread = nthread;
   al->next_slot = 0;

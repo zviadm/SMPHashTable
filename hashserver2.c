@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "localmem.h"
@@ -18,7 +19,7 @@
 
 #define MAX_SOCKETS       128             // per client thread
 #define MAX_VALUE_SIZE    (1024 * 1024)
-#define VALUE_BUFFER_SIZE (8 * MAX_VALUE_SIZE)
+#define VALUE_BUFFER_SIZE (2 * MAX_VALUE_SIZE)
 
 int design          = 2;
 int nservers        = 1;
@@ -31,7 +32,7 @@ int port            = 2117;
 int verbose         = 1;
 
 struct hash_value {
-  int size;
+  uint32_t size;
   char data[0];
 };
 
@@ -41,10 +42,14 @@ struct client_data {
   volatile int nsockets;
   volatile int sockets[MAX_SOCKETS];
   volatile FILE * fin[MAX_SOCKETS];
-  volatile FILE * fout[MAX_SOCKETS];
+  int writeiov_cnt[MAX_SOCKETS];
+  struct iovec writeiov[MAX_SOCKETS][1024]; // TODO: dynamically allocate this dude
 };
 
 struct client_data cdata[MAX_CLIENTS];
+
+// Constant value to return when no value is found in key/value store
+const uint32_t NULL_VALUE = 0;
 
 // variables used for stats and debugging
 volatile int active_clients = 0;
@@ -127,7 +132,6 @@ void run_server()
   }
 
   // Create all clients 
-  assert(nclients <= 100);
   for (int i = 0; i < nclients; i++) {
     cdata[i].cid = (design == 1 || design == 2) ? create_hash_table_client(hash_table) : 0;
     cdata[i].core = (design == 1 || design == 2) ? nservers + i : i;
@@ -212,7 +216,7 @@ void * tcpserver(void *xarg)
         start_time = now();
       }
     } else {
-      printf("failed to open socket %d %d\n", cid, s1);
+      printf("ERROR: client %d failed to open socket %d\n", cid, s1);
     }
   }
 }
@@ -224,8 +228,7 @@ int open_socket(struct client_data *cd, int sock)
   while (1) {
     if (cd->sockets[i] == -1) {        
       cd->fin[i] = fdopen(sock, "r");
-      cd->fout[i] = fdopen(sock, "w");
-      if (cd->fin[i] == NULL || cd->fout[i] == NULL) return 0;
+      if (cd->fin[i] == NULL) return 0;
 
       __sync_fetch_and_add(&cd->nsockets, 1);
       cd->sockets[i] = sock;
@@ -238,7 +241,6 @@ int open_socket(struct client_data *cd, int sock)
 void close_socket(struct client_data *cd, int sid)
 {
   fclose((FILE *)cd->fin[sid]);
-  fclose((FILE *)cd->fout[sid]);
   close(cd->sockets[sid]);
   __sync_fetch_and_sub(&cd->nsockets, 1); // also serves as memory barrier
   cd->sockets[sid] = -1;
@@ -276,7 +278,7 @@ int read_object(char *buf, size_t size, FILE *f)
     errno = 0;
     clearerr(f);
     r = fread(&buf[bread], 1, size - bread, f);
-    if (stream_error(f)) { return 2; }
+    if (stream_error(f)) return 2; 
     bread += r;
     // TODO: some sort of timeout
   }
@@ -285,12 +287,73 @@ int read_object(char *buf, size_t size, FILE *f)
   return 0;
 }
 
+int write_iovs(int sock, struct iovec *iov, int iovcnt) 
+{
+  int ret = 0;
+  ssize_t r;
+  int ciov = 0;
+  void *ciov_base = iov[0].iov_base;
+
+  while (ciov < iovcnt) {
+    errno = 0;
+    r = writev(sock, &iov[ciov], iovcnt - ciov);
+    if (errno != 0 && errno != EAGAIN) {
+      ret = 2;
+      break;
+    }
+
+    // progress ciov
+    while (r > 0) {
+      if (r >= iov[ciov].iov_len) {
+        r -= iov[ciov].iov_len;
+        ciov++;
+        if (ciov == iovcnt) break;
+
+        if (ciov_base != &NULL_VALUE) localmem_release(ciov_base, 1);
+        ciov_base = iov[ciov].iov_base;
+      } else {
+        iov[ciov].iov_len -= r;
+        iov[ciov].iov_base += r;
+        r = 0;
+      }
+    }
+  }
+
+  if (ciov_base != &NULL_VALUE) localmem_release(ciov_base, 1);
+  for (int i = ciov + 1; i < iovcnt; i++) {
+    if (iov[i].iov_base != &NULL_VALUE) localmem_release(iov[i].iov_base, 1);
+  }
+
+  return ret;
+}
+
+/**
+ * write_object blocking write full object to stream. no partial writing.
+ * return values:
+ * 0 - success
+ * 2 - stream error
+ */
+int write_object(char *buf, size_t size, int sock)
+{
+  ssize_t r;
+  size_t bwritten = 0;
+
+  while (bwritten < size) {
+    errno = 0;
+    r = write(sock, &buf[bwritten], size - bwritten);    
+    if (errno != 0 && errno != EAGAIN) return 2;
+    else if (r > 0) bwritten += r;
+  }
+
+  assert(bwritten == size);
+  return 0;
+}
+
 // client thread
 void * clientgo(void *xarg)
 {
   int r = 0;
   int last_socket = 0;
-  int doflush[MAX_SOCKETS] = { 0 };
 
   struct client_data *cd = (struct client_data *)xarg;
   int cid = cd->cid;
@@ -309,8 +372,14 @@ void * clientgo(void *xarg)
   void **values = (void **)memalign(CACHELINE, batch_size * sizeof(void *));
 
   // for stats/debugging
-  int totalnqueries = 0;
-  int docnt = 0;
+  long totalnqueries = 0;
+  long totalclock = 0;
+  long docnt = 0;
+
+  // initialize writeiov counts
+  for (int k = 0; k < MAX_SOCKETS; k++) {
+    cd->writeiov_cnt[k] = 0;
+  }
 
   while (1) {
     int nqueries = 0;
@@ -343,14 +412,15 @@ void * clientgo(void *xarg)
               if (r == 0) {
                 valueoffset[nqueries] = &valuebuf[bufoffset];
                 bufoffset += queries[nqueries].size;
-                // increase size of each query by sizeof(int) since we will store
+                // increase size of each query by sizeof(uint32_t) since we will store
                 // size of value + actual value in hash table
-                queries[nqueries].size += sizeof(int);
+                queries[nqueries].size += sizeof(uint32_t);
                 nqueries++;
               }
               break;
             default:
-              assert(0);
+              printf("ERROR: client %d received invalid query from socket: %d\n", cid, cd->sockets[i]);
+              r = 2;
               break;
           }
         }
@@ -361,9 +431,11 @@ void * clientgo(void *xarg)
 
           // debug and stats
           if ((verbose > 0) && (cd->nsockets == 0)) {
-            printf("avg nqueries: %.3f\n", (double)totalnqueries / docnt);
+            printf("nqueries: %ld, totalclock: %ld, docnt: %ld, avg nqueries: %.3f, avg clock: %.3f\n", 
+                totalnqueries, totalclock, docnt, (double)totalnqueries / docnt, (double)totalclock / totalnqueries);
             docnt = 0;
             totalnqueries = 0;
+            totalclock = 0;
           }
 
           if ((verbose > 0) && (acs == 0)) {
@@ -389,48 +461,64 @@ void * clientgo(void *xarg)
     docnt++;
 
     // perform all queries
+    //struct timespec tmpst, tmpet;
+    //clock_gettime(CLOCK_MONOTONIC, /*CLOCK_THREAD_CPUTIME_ID,*/ &tmpst);
     doqueries(cid, nqueries, queries, values);  
+    //clock_gettime(CLOCK_MONOTONIC, /*CLOCK_THREAD_CPUTIME_ID,*/ &tmpet);
+    //totalclock += (tmpet.tv_sec - tmpst.tv_sec) * 1000000000 + (tmpet.tv_nsec - tmpst.tv_nsec);
 
     // handle values returned after completeing all the queries
     // this loop must go through every returned value, even if
-    // fin and fout are broken, otherwise there will be memory leaks
-    // for any value that is not releaesd or marked ready
+    // sockets are broken, otherwise there will be memory leaks
+    // for any value that is not released or marked ready
     for (int k = 0; k < nqueries; k++) {
       struct hash_value *val = values[k];
 
       switch (queries[k].optype) {
-        case OPTYPE_LOOKUP:
-          if (cd->sockets[query_sid[k]] == query_socket[k]) {
+        case OPTYPE_LOOKUP: 
+          {
+          int sid = query_sid[k];
+          if (cd->sockets[sid] == query_socket[k]) {
             // if the socket has not been destroyed yet write out result
-            uint32_t size = (val == NULL) ? 0 : val->size;
-            r = fwrite(&size, sizeof(uint32_t), 1, (FILE *)cd->fout[query_sid[k]]);
-
-            if (size != 0) {
-              r = fwrite(val->data, 1, size, (FILE *)cd->fout[query_sid[k]]);
-            } 
-            doflush[query_sid[k]] = 1;
+            struct iovec *iov = &cd->writeiov[sid][cd->writeiov_cnt[sid]];
+            if (val == NULL) {
+              iov->iov_base = (char *)&NULL_VALUE;
+              iov->iov_len = sizeof(uint32_t);
+            } else {
+              iov->iov_base = val;
+              iov->iov_len = sizeof(uint32_t) + val->size;
+            }
+            cd->writeiov_cnt[sid]++;
           }
-          if (val != NULL) localmem_release(val, 1);
+          //if (val != NULL) localmem_release(val, 1);
+          }
           break;
         case OPTYPE_INSERT:
-          assert(val != NULL);
-          val->size = queries[k].size - sizeof(int);
-          memcpy(val->data, valueoffset[k], val->size);
-          localmem_mark_ready(val);
+          if (val != NULL) {
+            val->size = queries[k].size - sizeof(uint32_t);
+            memcpy(val->data, valueoffset[k], val->size);
+            localmem_mark_ready(val);
+          } else {
+            assert(0);
+          }
           break;
         default:
           assert(0);
           break;
       }
     }
+    
+    // Write all prepared iovs to appropriate sockets
+    for (int k = 0; k < MAX_SOCKETS; k++) {
+      if (cd->writeiov_cnt[k] > 0) {
+        r = write_iovs(cd->sockets[k], cd->writeiov[k], cd->writeiov_cnt[k]);
+        cd->writeiov_cnt[k] = 0;
 
-    // Flush all sockets where values have been returned
-    for (int i = 0; i < MAX_SOCKETS; i++) {
-      if (doflush[i] == 1) {
-        fflush((FILE *)cd->fout[i]);
-        doflush[i] = 0;
+        if (r == 2) {
+          printf("ERROR: client %d failed to write to socket: %d\n", cid, cd->sockets[k]);
+        }
       }
-    }
+    } 
   }
 
   free(queries);
@@ -444,23 +532,29 @@ void * clientgo(void *xarg)
 
 void doqueries(int cid, int nqueries, struct hash_query *queries, void **values)
 {
-  if (design == 1) {
-    for (int k = 0; k < nqueries; k++) {
-      if (queries[k].optype == OPTYPE_LOOKUP) {
-        values[k] = smp_hash_lookup(hash_table, cid, queries[k].key);
-      } else {
-        values[k] = smp_hash_insert(hash_table, cid, queries[k].key, queries[k].size);
+  switch (design) {
+    case 1:
+      for (int k = 0; k < nqueries; k++) {
+        if (queries[k].optype == OPTYPE_LOOKUP) {
+          values[k] = smp_hash_lookup(hash_table, cid, queries[k].key);
+        } else {
+          values[k] = smp_hash_insert(hash_table, cid, queries[k].key, queries[k].size);
+        }
       }
-    }
-  } else if (design == 2) {
-    smp_hash_doall(hash_table, cid, nqueries, queries, values);
-  } else if (design == 3) {
-    for (int k = 0; k < nqueries; k++) {
-      if (queries[k].optype == OPTYPE_LOOKUP) {
-        values[k] = locking_hash_lookup(hash_table, queries[k].key);
-      } else {
-        values[k] = locking_hash_insert(hash_table, queries[k].key, queries[k].size);
+      break;
+    case 2:
+      smp_hash_doall(hash_table, cid, nqueries, queries, values);
+      break;
+    case 3:
+      for (int k = 0; k < nqueries; k++) {
+        if (queries[k].optype == OPTYPE_LOOKUP) {
+          values[k] = locking_hash_lookup(hash_table, queries[k].key);
+        } else {
+          values[k] = locking_hash_insert(hash_table, queries[k].key, queries[k].size);
+        }
       }
-    }
+      break;
+    default:
+      assert(0);
   }
 }

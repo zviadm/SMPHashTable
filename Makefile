@@ -1,5 +1,5 @@
 CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 
-LFLAGS = -lpthread -lm
+LFLAGS = -lpthread -lm -lrt
 MAKEDEPEND = gcc -M $(CFLAGS) -o $*.d $<
 
 LIBSRC = smphashtable.c onewaybuffer.c localmem.c \
@@ -12,11 +12,11 @@ SRCS = $(LIBSRC) \
 			 benchhashserver.c
 
 LIBOBJS = $(LIBSRC:.c=.o)
-BINS = testhashtable benchhashtable hashserver2 hashserver3 benchhashserver
+BINS = testhashtable benchhashtable hashserver2 benchhashserver
 
 all: $(BINS)
 
-hashserver2 hashserver3 testhashtable benchhashtable: %: %.o $(LIBOBJS)
+hashserver2 testhashtable benchhashtable: %: %.o $(LIBOBJS)
 	gcc -o $@ $^ $(LFLAGS)
 
 benchhashtable: LFLAGS += -lprofiler
