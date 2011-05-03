@@ -13,10 +13,18 @@
 #include "smphashtable.h"
 #include "util.h"
 
+#ifndef AMD64
+  // Event Select values for Intel I7 core processor
+  // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits)
+  #define L2MISS_EVENT_SELECT 0x00410224
+#else
+  // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits)
+  #define L2MISS_EVENT_SELECT 0x0041077E
+#endif
+
 int design          = 1;
 int nservers        = 1;
 int nclients        = 1;
-int first_core      = 1;
 int batch_size      = 1000;
 int niters          = 100000;
 int nelems          = 100000;
@@ -72,9 +80,6 @@ int main(int argc, char *argv[])
       case 'd':
         design = atoi(optarg);
         break;
-      case 'f':
-        first_core = atoi(optarg);
-        break;
       case 'b':
         batch_size = atoi(optarg);
         break;
@@ -83,7 +88,6 @@ int main(int argc, char *argv[])
                "   -d design (1 = naive server/client, 2 = buffering server/client, 3 = locking)\n"
                "   -s number of servers / partitions\n"
                "   -c number of clients\n"
-               "   -f first core of servers (for design 1 & 2)\n"
                "   -b batch size (for design 2)\n"
                "   -i number of iterations\n"
                "   -n max number of elements in cache\n"
@@ -121,9 +125,8 @@ void run_benchmark()
 
   const int totalcpus = (design == 1 || design == 2) ? nservers + nclients : nclients;
   for (int i = 0; i < totalcpus; i++) {
-    // Event Select values for each pmc
-    // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits);w
-    if (StartCounter(i, 0, 0x00410224) != 0) {
+    
+    if (StartCounter(i, 0, L2MISS_EVENT_SELECT) != 0) {
       printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
              " and are running benchmark with sudo privileges\n", i);
     }
@@ -177,8 +180,8 @@ void run_benchmark()
   // print out all the important information
   printf("Benchmark Done. Design %d - Total time: %.3f, Iterations: %d\n", 
       design, tend - tstart, niters);
-  printf("nservers: %d, nclients: %d, partition overhead: %zu(bytes), nhits / niters: %.3f\n", 
-      nservers, nclients, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / niters);
+  printf("nservers: %d, nclients: %d, partition overhead: %zu(bytes), nhits / nlookups: %.3f\n", 
+      nservers, nclients, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / stats_get_nlookups(hash_table));
   printf("L2 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
       clients_totalpmc / niters, servers_totalpmc / niters, (clients_totalpmc + servers_totalpmc) / niters);
 

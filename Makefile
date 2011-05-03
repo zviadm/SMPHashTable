@@ -1,4 +1,5 @@
-CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 
+DFLAGS = -DAMD64
+CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 $(DFLAGS)
 LFLAGS = -lpthread -lm -lrt
 MAKEDEPEND = gcc -M $(CFLAGS) -o $*.d $<
 
