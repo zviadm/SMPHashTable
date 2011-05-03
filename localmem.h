@@ -39,7 +39,15 @@ void localmem_destroy(struct localmem *mem);
  */
 void * localmem_alloc(struct localmem *mem, size_t size);
 
+/* 
+ * localmem_free - Free allocated space from local memory
+ */
 void localmem_free(void *ptr);
+
+/*
+ * localmem_async_free - Schedule space to be freed from local memory
+ * This function is thread safe
+ */
 void localmem_async_free(void *ptr);
 
 /**

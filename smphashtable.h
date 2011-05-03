@@ -110,7 +110,18 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
  */
 void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size);
 
+/**
+ * value_release: Release value
+ * After client is done with looked up value from hash table, it must
+ * release it so that if value is evicted its space can be reused
+ */
 void value_release(void *ptr);
+
+/**
+ * value_mark_ready: Mark value to be ready to use
+ * After client copies data over to newly allocated element it must
+ * mark it as ready to use
+ */
 void value_mark_ready(void *ptr);
 
 /**

@@ -22,6 +22,7 @@
 #define INSERT_MSG_LENGTH 2
 
 #define DATA_READY_MASK   0x8000000000000000
+
 /**
  * Hash Table Storage Data Structures
  * struct elem       - element in table

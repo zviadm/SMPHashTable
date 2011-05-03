@@ -239,7 +239,6 @@ void* localmem_alloc(struct localmem *mem, size_t size)
 
   dst->mem = mem;
   dst->size_inuse |= 1; // put in use
-  //dst->ref_count = USED_BLOCK_REFCOUNT | DATA_READY_MASK | 1; // put the block in use
   mem->memused += get_block_size(dst);
 
   mm_check(mem);
@@ -307,46 +306,6 @@ void localmem_async_free(void *ptr)
     block->async_list_next = next;
   } while (__sync_bool_compare_and_swap(&mem->async_free_list, next, block) == 0);
 }
-
-/*
-void localmem_retain(void *ptr)
-{
-  mem_block_t block = get_block_from_data_ptr(ptr);
-  __sync_add_and_fetch(&(block->ref_count), 1);
-}
-*/
-
-/*
-void localmem_release(void *ptr, int async_free)
-{
-  mem_block_t block = get_block_from_data_ptr(ptr);
-  uint64_t ref_count = __sync_sub_and_fetch(&(block->ref_count), 1);
-  if (ref_count == USED_BLOCK_REFCOUNT) {
-    if (async_free == 0) {
-      localmem_free(block->mem, ptr);
-    } else {
-      localmem_async_free(block->mem, ptr);
-    }
-  }
-}
-*/
-
-/*
-void localmem_mark_ready(void *ptr)
-{
-  mem_block_t block = get_block_from_data_ptr(ptr);
-  uint64_t ref_count = __sync_and_and_fetch(&(block->ref_count), (USED_BLOCK_REFCOUNT | (DATA_READY_MASK - 1)));
-  if (ref_count == USED_BLOCK_REFCOUNT) {
-    localmem_async_free(block->mem, ptr);
-  }
-}
-
-int localmem_is_ready(void *ptr)
-{
-  mem_block_t block = get_block_from_data_ptr(ptr);
-  return (block->ref_count & DATA_READY_MASK) == 0 ? 1 : 0;
-}
-*/
 
 /*
  * mm_check() section
