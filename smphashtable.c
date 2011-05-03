@@ -498,7 +498,7 @@ struct elem * hash_lookup(struct partition *p, hash_key key)
   struct elem *e = TAILQ_FIRST(eh);
   while (e != NULL) {
     if (e->key == key) {
-      //lru(p, e);
+      lru(p, e);
       return e;
     }
     e = TAILQ_NEXT(e, chain);
@@ -529,12 +529,16 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size)
     // or even keep separate lrus for different size elements
     // also if it is taking too long to allocate just discard it
     struct elem *l = TAILQ_LAST(&p->lru, lrulist);
-    assert(l);
+    if (l == e) {
+      // we deleted all elements from the hash table and there is still no place
+      if (e != NULL) {
+        TAILQ_REMOVE(eh, e, chain);
+        TAILQ_REMOVE(&p->lru, e, lru);
+        TAILQ_INSERT_TAIL(&p->free, e, free);
+      }
+      return NULL;
+    }
     hash_remove(p, l);
-
-    // very obscure case when old item with same key gets 
-    // removed while allocating new space
-    if (l == e) e = NULL;
   }
 
   if (e == NULL) {
@@ -558,7 +562,7 @@ void hash_remove(struct partition *p, struct elem *e)
   TAILQ_REMOVE(eh, e, chain);
   TAILQ_REMOVE(&p->lru, e, lru);
   p->size -= e->size;
-  if (e->value != NULL) localmem_release(e->value, 0);
+  localmem_release(e->value, 0);
   TAILQ_INSERT_TAIL(&p->free, e, free);
 }
 
