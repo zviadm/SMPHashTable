@@ -13,7 +13,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "localmem.h"
 #include "smphashtable.h"
 #include "util.h"
 
@@ -125,7 +124,7 @@ void print_stats()
 
 void run_server() 
 {
-  hash_table = create_hash_table(size, nelems, nservers);
+  hash_table = create_hash_table(size, nservers);
 
   if (design == 1 || design == 2) {
     start_hash_table_servers(hash_table, 0);
@@ -318,7 +317,7 @@ int write_iovs(int sock, struct iovec *iov, int iovcnt)
         ciov++;
         if (ciov == iovcnt) break;
 
-        if (ciov_base != &NULL_VALUE) localmem_release(ciov_base, 1);
+        if (ciov_base != &NULL_VALUE) value_release(ciov_base);
         ciov_base = iov[ciov].iov_base;
       } else {
         iov[ciov].iov_len -= r;
@@ -328,9 +327,9 @@ int write_iovs(int sock, struct iovec *iov, int iovcnt)
     }
   }
 
-  if (ciov_base != &NULL_VALUE) localmem_release(ciov_base, 1);
+  if (ciov_base != &NULL_VALUE) value_release(ciov_base);
   for (int i = ciov + 1; i < iovcnt; i++) {
-    if (iov[i].iov_base != &NULL_VALUE) localmem_release(iov[i].iov_base, 1);
+    if (iov[i].iov_base != &NULL_VALUE) value_release(iov[i].iov_base);
   }
 
   return ret;
@@ -505,14 +504,13 @@ void * clientgo(void *xarg)
             }
             cd->writeiov_cnt[sid]++;
           }
-          //if (val != NULL) localmem_release(val, 1);
           }
           break;
         case OPTYPE_INSERT:
           if (val != NULL) {
             val->size = queries[k].size - sizeof(uint32_t);
             memcpy(val->data, valueoffset[k], val->size);
-            localmem_mark_ready(val);
+            value_mark_ready(val);
           } else {
             assert(0);
           }

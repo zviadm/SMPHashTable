@@ -9,7 +9,6 @@
 #include <google/profiler.h>
 
 #include "ia32perf.h"
-#include "localmem.h"
 #include "smphashtable.h"
 #include "util.h"
 
@@ -108,7 +107,7 @@ void run_benchmark()
 {
   srand(19890811);
 
-  hash_table = create_hash_table(size, nelems, nservers);
+  hash_table = create_hash_table(size, nservers);
   cdata = malloc(nclients * sizeof(struct client_data));
   for (int i = 0; i < nclients; i++) {
     cdata[i].seed = rand();
@@ -221,12 +220,12 @@ void handle_query_result(struct hash_query *query, void *value)
       if (val[0] != query->key) {
         printf("ERROR: values do not match: %ld, should be %ld\n", val[0], query->key);
       }
-      localmem_release(val, 1);     
+      value_release(val);
     }
   } else {
     assert(val != NULL);
     val[0] = query->key;
-    localmem_mark_ready(val);
+    value_mark_ready(val);
   }
 }
 

@@ -16,7 +16,7 @@ struct hash_table;
  * @nservers: number of servers that serve hash content
  * @return: pointer to the created hash table
  */
-struct hash_table *create_hash_table(size_t max_size, int nelems, int nservers); 
+struct hash_table *create_hash_table(size_t max_size, int nservers); 
 
 /**
  * destroy_hash_table - Destroy smp hash table
@@ -109,6 +109,9 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
  * This function must not be called when hash servers are running.
  */
 void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size);
+
+void value_release(void *ptr);
+void value_mark_ready(void *ptr);
 
 /**
  * Stats functions

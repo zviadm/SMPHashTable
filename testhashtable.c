@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "localmem.h"
 #include "smphashtable.h"
 
 static inline void insert(struct hash_table *table, int use_locking, int c, hash_key key, long val)
@@ -16,7 +15,7 @@ static inline void insert(struct hash_table *table, int use_locking, int c, hash
   }
   assert(value != NULL);
   *(long *)value = val;
-  localmem_mark_ready(value);
+  value_mark_ready(value);
 }
 
 static inline long lookup(struct hash_table *table, int use_locking, int c, hash_key key)
@@ -29,9 +28,8 @@ static inline long lookup(struct hash_table *table, int use_locking, int c, hash
   }
   if (value == NULL) return 0;
   else {
-    assert(localmem_is_ready(value));
     long val = *(long *)value;
-    localmem_release(value, 1);
+    value_release(value);
     return val;
   }
 }
@@ -40,7 +38,7 @@ void test1(int use_locking)
 {
   printf("----------- Test 1 Start -----------\n");
   printf("Creating Hash Table...\n");
-  struct hash_table *table = create_hash_table(65536, 1024, 2);
+  struct hash_table *table = create_hash_table(65536, 2);
   int c = 0;
   if (use_locking == 0) {
     printf("Starting Servers...\n");
@@ -87,7 +85,7 @@ void test2(int use_locking)
   printf("----------- Test 2 Start -----------\n");
   printf("Creating Hash Table...\n");
   long max_count = 1024;
-  struct hash_table *table = create_hash_table(2 * max_count * 64, 2 * max_count, 2);
+  struct hash_table *table = create_hash_table(2 * max_count * 128, 2);
   int c = 0;
   if (use_locking == 0) {
     printf("Starting Servers...\n");
@@ -134,7 +132,7 @@ void test3(int use_locking)
 {
   printf("----------- Test 3 Start -----------\n");
   printf("Creating Hash Table...\n");
-  struct hash_table *table = create_hash_table(65536, 1024, 2);
+  struct hash_table *table = create_hash_table(65536, 2);
   int c1 = 0;
   int c2 = 0;
   if (use_locking == 0) {
@@ -180,7 +178,7 @@ void test4()
 {
   printf("----------- Test 4 Start -----------\n");
   printf("Creating Hash Table...\n");
-  struct hash_table *table = create_hash_table(65536, 1024, 2);
+  struct hash_table *table = create_hash_table(131072, 2);
   printf("Starting Servers...\n");
   start_hash_table_servers(table, 0);
 
@@ -207,7 +205,7 @@ void test4()
   for (int i = 0; i < nqueries; i++) {
     assert(values[i] != NULL);
     *(long *)values[i] = i;
-    localmem_mark_ready(values[i]);
+    value_mark_ready(values[i]);
   }
 
   smp_hash_doall(table, c, nqueries, &queries[nqueries], values);
@@ -215,9 +213,8 @@ void test4()
   printf("Checking All Values...\n");
   for (int i = 0; i < nqueries; i++) {
     assert(values[i] != NULL);
-    assert(localmem_is_ready(values[i]));
     assert(*(long*)values[i] == i);
-    localmem_release(values[i], 1);
+    value_release(values[i]);
   }
 
   printf("Stopping Servers...\n");
