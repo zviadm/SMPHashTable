@@ -39,26 +39,8 @@ void localmem_destroy(struct localmem *mem);
  */
 void * localmem_alloc(struct localmem *mem, size_t size);
 
-/*
- * localmem_retain - Retain block allocated in local memory
- */
-void localmem_retain(void *ptr);
-
-/*
- * localmem_release - Releases and if necessary frees block allocated in local memory
- */
-void localmem_release(void *ptr, int async_free);
-
-/*
- * localmem_mark_ready - mark allocated memory block as ready to use
- */
-void localmem_mark_ready(void *ptr);
-
-/*
- * localmem_is_ready - returns 1 if memory block is ready to use
- * 0 otherwise
- */
-int localmem_is_ready(void *ptr);
+void localmem_free(void *ptr);
+void localmem_async_free(void *ptr);
 
 /**
  * localmem_used - returns number of bytes that are allocated in

@@ -19,18 +19,14 @@
 #define BLOCK_HEADER_SIZE (2 * sizeof(size_t) + sizeof(unsigned long) + sizeof(struct localmem *))
 
 /* Smallest Block Size */
-#define MIN_BLOCK_SIZE ALIGN(BLOCK_HEADER_SIZE) 
+#define MIN_BLOCK_SIZE (2 * CACHELINE) 
 
 /* Maximum through how many blocks will i brute force search */
 #define MAX_BRUTE_SEARCH 10
 
-/* Until first write, newly allocated block is not ready to be read */
-#define USED_BLOCK_REFCOUNT   0x8000000000000000
-#define DATA_READY_MASK       0x4000000000000000
-
 struct mem_block {
-  volatile size_t size;
-  volatile uint64_t ref_count;
+  volatile size_t size_inuse;
+  struct localmem *mem;
   union {
     struct {
       volatile mem_block_t list_next;
@@ -38,7 +34,6 @@ struct mem_block {
       volatile mem_block_t async_list_next;
     };
     struct {
-      struct localmem *mem;
       char data_ptr[0];
     };
   };
@@ -82,19 +77,28 @@ inline int get_bin_from_size(size_t size) {
  */
 inline void set_block_size(mem_block_t block, size_t size)
 {
-  block->size = size;
+  block->size_inuse = (size << 1) | (block->size_inuse & 1);
   *(size_t *)((unsigned long)block + size - sizeof(size_t)) = size;
+}
+
+inline size_t get_block_size(mem_block_t block)
+{
+  return block->size_inuse >> 1;
+}
+
+inline int is_block_used(mem_block_t block)
+{
+  return block->size_inuse & 1;
 }
 
 inline mem_block_t get_block_from_data_ptr(void* ptr)
 {
-  return 
-    (mem_block_t)((unsigned long)ptr - sizeof(struct localmem *) - sizeof(unsigned long) - sizeof(size_t));
+  return (mem_block_t)((unsigned long)ptr - 16);
 }
 
 void alloc_block(struct localmem *mem, mem_block_t block, size_t size)
 {
-  block->ref_count = 0;
+  block->size_inuse = 0;
   set_block_size(block, size);
   block->list_prev = NULL;
   block->async_list_next = NULL;
@@ -116,7 +120,7 @@ void unlink_block(struct localmem *mem, mem_block_t block)
   {
     block->list_prev->list_next = block->list_next;
   }else {
-    mem->bins[get_bin_from_size(block->size)] = block->list_next;
+    mem->bins[get_bin_from_size(get_block_size(block))] = block->list_next;
   }
 
   if (block->list_next != NULL)
@@ -135,7 +139,7 @@ mem_block_t get_adjacent_prev(struct localmem *mem, mem_block_t block)
 
 mem_block_t get_adjacent_next(struct localmem *mem, mem_block_t block)
 {
-  void *next_block = (void *)((unsigned long)block + block->size);
+  void *next_block = (void *)((unsigned long)block + get_block_size(block));
   if (next_block == mem->endaddr) return 0;
   return (mem_block_t)next_block;
 }
@@ -176,8 +180,8 @@ void localmem_destroy(struct localmem *mem)
     printf("\n");
   }
 #endif
-  assert(((mem_block_t)mem->startaddr)->size == (mem->endaddr - mem->startaddr));
-  assert(((mem_block_t)mem->startaddr)->ref_count == 0);
+  assert(get_block_size((mem_block_t)mem->startaddr) == (mem->endaddr - mem->startaddr));
+  assert(is_block_used((mem_block_t)mem->startaddr) == 0);
 
   free(mem->startaddr);
 }
@@ -196,7 +200,7 @@ void* localmem_alloc(struct localmem *mem, size_t size)
   // if aligned_size block exists or not
   int cnt = 1;
   mem_block_t dst = mem->bins[bin_index];
-  while (dst != NULL && aligned_size > dst->size) {
+  while (dst != NULL && aligned_size > get_block_size(dst)) {
     if (cnt >= MAX_BRUTE_SEARCH) {
       // we cant go ahead and brute search whole list, stop
       // trying after we have tried MAX_BRUTE_SEARCH items in the
@@ -225,7 +229,7 @@ void* localmem_alloc(struct localmem *mem, size_t size)
   unlink_block(mem, dst);
 
   // split current block into allocated block and leftover block
-  size_t left_over_size = dst->size - aligned_size;
+  size_t left_over_size = get_block_size(dst) - aligned_size;
   if (left_over_size >= MIN_BLOCK_SIZE) {
     // only split it if left over block can actually be a block
     // and at least hold the header
@@ -234,40 +238,43 @@ void* localmem_alloc(struct localmem *mem, size_t size)
   }
 
   dst->mem = mem;
-  dst->ref_count = USED_BLOCK_REFCOUNT | DATA_READY_MASK | 1; // put the block in use
-  mem->memused += dst->size;
+  dst->size_inuse |= 1; // put in use
+  //dst->ref_count = USED_BLOCK_REFCOUNT | DATA_READY_MASK | 1; // put the block in use
+  mem->memused += get_block_size(dst);
 
   mm_check(mem);
   return (void *)dst->data_ptr;
 }
 
-void localmem_free(struct localmem *mem, void *ptr) 
+void localmem_free(void *ptr) 
 {
-  mm_check(mem);
-
   // Get Block, and both adjacent blocks
   mem_block_t block = get_block_from_data_ptr(ptr);
-  assert(block->ref_count == USED_BLOCK_REFCOUNT);
+  assert(is_block_used(block) == 1);
+  struct localmem *mem = block->mem;
+
+  mm_check(mem);
+
   mem_block_t prev_block = get_adjacent_prev(mem, block);
   mem_block_t next_block = get_adjacent_next(mem, block);
 
   // This will be the merged block
   mem_block_t merged_free_block = block;
-  size_t merged_free_block_size = block->size;
-  mem->memused -= block->size;
+  size_t merged_free_block_size = get_block_size(block);
+  mem->memused -= get_block_size(block);
 
-  if ((prev_block != NULL) && (prev_block->ref_count == 0))
+  if ((prev_block != NULL) && (is_block_used(prev_block) == 0))
   {
     // if prev_block is free then merge it
     merged_free_block = prev_block;
-    merged_free_block_size += prev_block->size;
+    merged_free_block_size += get_block_size(prev_block);
     unlink_block(mem, prev_block);
   }
 
-  if ((next_block != NULL) && (next_block->ref_count == 0))
+  if ((next_block != NULL) && (is_block_used(next_block) == 0))
   {
     // if the next block is free then merge it
-    merged_free_block_size += next_block->size;
+    merged_free_block_size += get_block_size(next_block);
     unlink_block(mem, next_block);
   }
   alloc_block(mem, merged_free_block, merged_free_block_size);
@@ -282,16 +289,17 @@ void localmem_free_all(struct localmem *mem)
   mem_block_t block = __sync_fetch_and_and(&mem->async_free_list, 0x0);
   while (block != 0x0) {
     mem_block_t next = block->async_list_next;
-    localmem_free(mem, (void *)block->data_ptr);
+    localmem_free((void *)block->data_ptr);
     block = next;
   }
 
   mm_check(mem);
 }
 
-void localmem_async_free(struct localmem *mem, void *ptr)
+void localmem_async_free(void *ptr)
 {
   mem_block_t block = get_block_from_data_ptr(ptr);
+  struct localmem *mem = block->mem;
   mem_block_t next;
   
   do {
@@ -300,12 +308,15 @@ void localmem_async_free(struct localmem *mem, void *ptr)
   } while (__sync_bool_compare_and_swap(&mem->async_free_list, next, block) == 0);
 }
 
+/*
 void localmem_retain(void *ptr)
 {
   mem_block_t block = get_block_from_data_ptr(ptr);
   __sync_add_and_fetch(&(block->ref_count), 1);
 }
+*/
 
+/*
 void localmem_release(void *ptr, int async_free)
 {
   mem_block_t block = get_block_from_data_ptr(ptr);
@@ -318,7 +329,9 @@ void localmem_release(void *ptr, int async_free)
     }
   }
 }
+*/
 
+/*
 void localmem_mark_ready(void *ptr)
 {
   mem_block_t block = get_block_from_data_ptr(ptr);
@@ -333,6 +346,7 @@ int localmem_is_ready(void *ptr)
   mem_block_t block = get_block_from_data_ptr(ptr);
   return (block->ref_count & DATA_READY_MASK) == 0 ? 1 : 0;
 }
+*/
 
 /*
  * mm_check() section
@@ -355,7 +369,7 @@ int mm_check_free_list(struct localmem *mem) {
         mm_check_err_msg(block_ptr, "Block pointer off of the heap.");
         return 0;    
       }
-      if (block_ptr->ref_count != 0) { // Check for things on the free list that aren't marked free
+      if (is_block_used(block_ptr) != 0) { // Check for things on the free list that aren't marked free
         mm_check_err_msg(block_ptr, "Block is in the free list but not marked as free.");
         return 0;
       }
@@ -377,18 +391,18 @@ int mm_check_heap(struct localmem *mem) {
       return 0;
     }
 
-    if (*(size_t *)((unsigned long)block_ptr + block_ptr->size - sizeof(size_t)) != 
-        block_ptr->size) {
+    if (*(size_t *)((unsigned long)block_ptr + get_block_size(block_ptr) - sizeof(size_t)) != 
+        get_block_size(block_ptr)) {
       mm_check_err_msg(block_ptr, "Block size at the end of block is invalid.");
       return 0;
     }
 
-    int cur_block_free = block_ptr->ref_count == 0;
+    int cur_block_free = (is_block_used(block_ptr) == 0);
     if (last_block_free && cur_block_free) { // we have two contiguous free blocks
       mm_check_err_msg(block_ptr, "Two consecutive free blocks (this and the previous block)");
       return 0;
     }
-    int msb = get_bin_from_size(block_ptr->size);
+    int msb = get_bin_from_size(get_block_size(block_ptr));
     // check if this thing is in the free list
     mem_block_t free_list_ptr = mem->bins[msb];
     int found = 0;
@@ -409,7 +423,7 @@ int mm_check_heap(struct localmem *mem) {
       return 0;
     }
     last_block_free = cur_block_free;
-    block_ptr = (mem_block_t)((unsigned long)block_ptr + block_ptr->size);
+    block_ptr = (mem_block_t)((unsigned long)block_ptr + get_block_size(block_ptr));
   }
 
   if (block_ptr != end_ptr) {
