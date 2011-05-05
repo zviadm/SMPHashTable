@@ -119,7 +119,7 @@ void run_benchmark()
 
   printf("Benchmark starting...\n"); 
   // start the clients
-  ProfilerStart("cpu.info"); 
+  //ProfilerStart("cpu.info"); 
   double tstart = now();
 
   const int totalcpus = (design == 1 || design == 2) ? nservers + nclients : nclients;
@@ -174,7 +174,7 @@ void run_benchmark()
   }
 
   double tend = now();
-  ProfilerStop();
+  //ProfilerStop();
 
   // print out all the important information
   printf("Benchmark Done. Design %d - Total time: %.3f, Iterations: %d\n", 
