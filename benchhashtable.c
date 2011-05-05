@@ -24,6 +24,7 @@
 int design          = 1;
 int nservers        = 1;
 int nclients        = 1;
+int first_core      = -1;
 int batch_size      = 1000;
 int niters          = 100000;
 int nelems          = 100000;
@@ -53,13 +54,16 @@ int main(int argc, char *argv[])
 {
   int opt_char;
 
-  while((opt_char = getopt(argc, argv, "s:c:i:n:t:m:w:d:f:b:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:c:f:i:n:t:m:w:d:f:b:")) != -1) {
     switch (opt_char) {
       case 's':
         nservers = atoi(optarg);
         break;
       case 'c':
         nclients = atoi(optarg);
+        break;
+      case 'f':
+        first_core = atoi(optarg);
         break;
       case 'i':
         niters = atoi(optarg);
@@ -97,6 +101,7 @@ int main(int argc, char *argv[])
         exit(-1);
     }
   }
+  if (first_core == -1) first_core = nclients;
 
   iters_per_client = niters / nclients;
   run_benchmark();
@@ -122,18 +127,25 @@ void run_benchmark()
   //ProfilerStart("cpu.info"); 
   double tstart = now();
 
-  const int totalcpus = (design == 1 || design == 2) ? nservers + nclients : nclients;
-  for (int i = 0; i < totalcpus; i++) {
-    
+  for (int i = 0; i < nclients; i++) {
     if (StartCounter(i, 0, L2MISS_EVENT_SELECT) != 0) {
       printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
              " and are running benchmark with sudo privileges\n", i);
     }
     ReadCounter(i, 0, &pmclast[i]);
   }
+  if (design == 1 || design == 2) {
+    for (int i = first_core; i < first_core + nservers; i++) {
+      if (StartCounter(i, 0, L2MISS_EVENT_SELECT) != 0) {
+        printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
+            " and are running benchmark with sudo privileges\n", i);
+      }
+      ReadCounter(i, 0, &pmclast[i]);
+    }
+  }
 
   if (design == 1 || design == 2) {
-    start_hash_table_servers(hash_table, nclients);
+    start_hash_table_servers(hash_table, first_core);
   }
 
   int r;
@@ -166,7 +178,7 @@ void run_benchmark()
     clients_totalpmc += tmp - pmclast[i];
   }
   if (design == 1 || design == 2) {
-    for (int i = nclients; i < nclients + nservers; i++) {
+    for (int i = first_core; i < first_core + nservers; i++) {
       uint64_t tmp;
       ReadCounter(i, 0, &tmp);
       servers_totalpmc += tmp - pmclast[i];
@@ -187,7 +199,7 @@ void run_benchmark()
 #if 0
   double avg, stddev;
   for (int i = 0; i < nservers; i++) {
-    stats_get_extreme_buckets(hash_table, i, &avg, &stddev);
+    stats_get_buckets(hash_table, i, &avg, &stddev);
     printf("Server %d Buckets, avg %.3f, stddev %.3f\n", i, avg, stddev);
   }
 #endif
