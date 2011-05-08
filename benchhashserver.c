@@ -21,7 +21,8 @@ int nclients        = 1;
 int nservers        = 1;
 int batch_size      = 1000;
 int niters          = 100000;
-int query_mask      = 0xFFFFF;
+int query_mask      = (1 << 20) - 1;
+int query_shift     = (31 - 20);
 int min_val_length  = 8;
 int max_val_length  = 8;
 int first_core      = -1;
@@ -80,8 +81,10 @@ int main(int argc, char *argv[])
       case 'i':
         niters = atoi(optarg);
         break;
-      case 'm':
+      case 'm':    
+        query_shift = 31 - atoi(optarg); 
         query_mask = (1 << atoi(optarg)) - 1;
+        assert(query_shift > 0);
         break;
       case 'l':
         sscanf(optarg, "%d/%d", &min_val_length, &max_val_length);
@@ -193,7 +196,7 @@ void get_random_query(int client_id, double write_threshold, size_t minval, size
     enum optype *optype, uint64_t *key, size_t *size, char *value)
 {
   *optype = (rand_r(&cdata[client_id].seed) < write_threshold * RAND_MAX) ? OPTYPE_INSERT : OPTYPE_LOOKUP; 
-  *key = rand_r(&cdata[client_id].seed) & query_mask;
+  *key = (rand_r(&cdata[client_id].seed) >> query_shift) & query_mask;
   if (*optype == OPTYPE_INSERT) {
     *size = ((rand_r(&cdata[client_id].seed) % (maxval - minval + 1)) + minval) & 0xFFFFFFF8;
     assert(*size > 0);

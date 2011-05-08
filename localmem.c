@@ -16,7 +16,7 @@
 #define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1))
 
 /* Allocated Block Header Size */
-#define BLOCK_HEADER_SIZE (2 * sizeof(size_t) + sizeof(unsigned long) + sizeof(struct localmem *))
+#define BLOCK_HEADER_SIZE (2 * sizeof(size_t) + sizeof(struct localmem *))
 
 /* Smallest Block Size */
 #define MIN_BLOCK_SIZE (2 * CACHELINE) 

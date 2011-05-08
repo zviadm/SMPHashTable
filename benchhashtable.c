@@ -29,7 +29,8 @@ int batch_size      = 1000;
 int niters          = 100000;
 int nelems          = 100000;
 size_t size         = 6400000;
-int query_mask      = 0xFFFFF;
+int query_mask      = (1 << 20) - 1;
+int query_shift     = (31 - 20);
 int write_threshold = (0.3f * (double)RAND_MAX);
 
 struct hash_table *hash_table;
@@ -75,7 +76,9 @@ int main(int argc, char *argv[])
         size = atol(optarg);
         break;
       case 'm':
+        query_shift = 31 - atoi(optarg); 
         query_mask = (1 << atoi(optarg)) - 1;
+        assert(query_shift > 0);
         break;
       case 'w':
         write_threshold = (int)(atof(optarg) * (double)RAND_MAX);
@@ -217,7 +220,7 @@ void get_random_query(int client_id, struct hash_query *query)
   unsigned long r = rand_r(&cdata[client_id].seed);
 
   query->optype = optype;
-  query->key = r & query_mask;
+  query->key = (r >> query_shift) & query_mask;
   query->size = 0;
   if (optype == OPTYPE_INSERT) {
     query->size = 8;
