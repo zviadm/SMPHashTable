@@ -440,7 +440,7 @@ void * clientgo(void *xarg)
           int acs = __sync_sub_and_fetch(&active_clients, 1);
 
           // debug and stats
-          if ((verbose > 0) && (cd->nsockets == 0)) {
+          if ((verbose > 1) && (cd->nsockets == 0)) {
             printf("nqueries: %ld, totalclock: %ld, docnt: %ld, avg nqueries: %.3f, avg clock: %.3f\n", 
                 totalnqueries, totalclock, docnt, (double)totalnqueries / docnt, (double)totalclock / totalnqueries);
             docnt = 0;
@@ -466,7 +466,7 @@ void * clientgo(void *xarg)
       }
     }
 
-    if (verbose > 0) {
+    if (verbose > 1) {
       // debug and stats
       totalnqueries += nqueries;
       docnt++;
