@@ -99,7 +99,7 @@ struct hash_table {
 };
 
 // Forward declarations
-void init_hash_partition(struct hash_table *hash_table, struct partition *p);
+void init_hash_partition(struct hash_table *hash_table, int s);
 void destroy_hash_partition(struct partition *p);
 void *hash_table_server(void* args);
 
@@ -144,7 +144,7 @@ struct hash_table *create_hash_table(size_t max_size, int nservers)
   hash_table->partitions = memalign(CACHELINE, nservers * sizeof(struct partition));
   hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
   for (int i = 0; i < hash_table->nservers; i++) {
-    init_hash_partition(hash_table, &hash_table->partitions[i]);
+    init_hash_partition(hash_table, i);
   }
 
   hash_table->threads = (pthread_t *)malloc(nservers * sizeof(pthread_t));
@@ -170,8 +170,10 @@ void destroy_hash_table(struct hash_table *hash_table)
   free(hash_table);
 }
 
-void init_hash_partition(struct hash_table *hash_table, struct partition *p)
+void init_hash_partition(struct hash_table *hash_table, int s)
 {
+  set_affinity(21 + s);
+  struct partition *p = &hash_table->partitions[s];
   assert((unsigned long)p % CACHELINE == 0);
   p->nservers = hash_table->nservers;
   p->max_size = hash_table->max_size / hash_table->nservers;
@@ -265,10 +267,15 @@ void *hash_table_server(void* args)
   struct hash_table *hash_table = ((struct thread_args *) args)->hash_table;
   struct partition *p = &hash_table->partitions[s];
   struct box_array *boxes = hash_table->boxes;
-  uint64_t localbuf[ONEWAY_BUFFER_SIZE + 2];
+  uint64_t localbuf[2 * ONEWAY_BUFFER_SIZE];
+  int readcnt[MAX_CLIENTS];
   int quitting = 0;
 
   set_affinity(c);
+
+  // initialize readcnt
+  for (int i = 0; i < MAX_CLIENTS; i++) readcnt[i] = BUFFER_FLUSH_COUNT;
+
   while (quitting == 0) {
     // after server receives quit signal it should make sure to complete all 
     // queries that are in the buffers
@@ -276,8 +283,9 @@ void *hash_table_server(void* args)
 
     int nclients = hash_table->nclients;
     for (int i = 0; i < nclients; i++) {
-      int count = buffer_read_all(&boxes[i].boxes[s].in, (quitting == 0) ? SERVER_READ_COUNT : ONEWAY_BUFFER_SIZE, localbuf);
+      int count = buffer_read_all(&boxes[i].boxes[s].in, (quitting == 0) ? readcnt[i] : ONEWAY_BUFFER_SIZE, localbuf);
       if (count == 0) continue;
+      readcnt[i] -= count;
 
       int k = 0;
       int j = 0;
@@ -306,6 +314,7 @@ void *hash_table_server(void* args)
                 int tmpcnt = 
                   buffer_read_all(&boxes[i].boxes[s].in, k + INSERT_MSG_LENGTH - count, &localbuf[count]);
                 assert(tmpcnt == k + INSERT_MSG_LENGTH - count);
+                readcnt[i] -= tmpcnt;
               }
 
               p->ninserts++;
@@ -324,6 +333,8 @@ void *hash_table_server(void* args)
       }
 
       buffer_write_all(&boxes[i].boxes[s].out, j, localbuf, 1);
+
+      if (readcnt[i] < 4) readcnt[i] += BUFFER_FLUSH_COUNT;
     }
   }
   return 0;
