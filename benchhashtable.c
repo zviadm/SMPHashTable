@@ -6,7 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <google/profiler.h>
+//#include <google/profiler.h>
 
 #include "ia32perf.h"
 #include "smphashtable.h"

@@ -20,7 +20,7 @@ all: $(BINS)
 hashserver2 testhashtable benchhashtable: %: %.o $(LIBOBJS)
 	gcc -o $@ $^ $(LFLAGS)
 
-benchhashtable: LFLAGS += -lprofiler
+#benchhashtable: LFLAGS += -lprofiler
 
 benchhashserver: %: %.o util.o hashclient.o
 	gcc -o $@ $^ /usr/local/lib/libmemcached.a $(LFLAGS)

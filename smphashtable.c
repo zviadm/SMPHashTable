@@ -172,7 +172,7 @@ void destroy_hash_table(struct hash_table *hash_table)
 
 void init_hash_partition(struct hash_table *hash_table, int s)
 {
-  set_affinity(21 + s);
+  //set_affinity(21 + s);
   struct partition *p = &hash_table->partitions[s];
   assert((unsigned long)p % CACHELINE == 0);
   p->nservers = hash_table->nservers;
