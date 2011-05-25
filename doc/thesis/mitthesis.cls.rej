@@ -1,0 +1,42 @@
+***************
+*** 241,254 ****
+  
+  %%%%%%%  Fix various header and footer problems %%%
+  
+  % Format for draft of thesis.  Define our own PageStyle -
+  % Just like headings, but has foot lines with the date and warning
+  
+  \if@twoside         % If two-sided printing.
+  \def\ps@drafthead{
+      \let\@mkboth\markboth
+!     \def\@oddfoot{\rm \today \hfil \sc **DRAFT**}
+!     \def\@evenfoot{\sc **DRAFT** \hfil \rm \today }
+      \def\@evenhead{\rm \thepage\hfil \sl \leftmark}
+      \def\@oddhead{\hbox{}\sl \rightmark \hfil \rm\thepage}
+      \def\chaptermark##1{\markboth {\uppercase{\ifnum \c@secnumdepth >\m@ne
+--- 241,265 ----
+  
+  %%%%%%%  Fix various header and footer problems %%%
+  
++ % Draft mark on the right side of left pages (outside)
++ % this mark is also the only one visible on single sided.
++ \newcommand{\draftrmark}{**DRAFT**} 
++ % Draft mark on the left side of right pages (outside)
++ \newcommand{\draftlmark}{**DRAFT**} % 
++ 
++ % Macros to make changing the Draft easier
++ \newcommand{\drmark}[1]{\renewcommand{\draftrmark}{#1}}
++ \newcommand{\dlmark}[1]{\renewcommand{\draftlmark}{#1}}
++ \newcommand{\dmark}[1]{\drmark{#1}\dlmark{#1}}
++ 
+  % Format for draft of thesis.  Define our own PageStyle -
+  % Just like headings, but has foot lines with the date and warning
+  
+  \if@twoside         % If two-sided printing.
+  \def\ps@drafthead{
+      \let\@mkboth\markboth
+!     \def\@oddfoot{\rm \today \hfil \sc \draftrmark}
+!     \def\@evenfoot{\sc \draftlmark \hfil \rm \today }
+      \def\@evenhead{\rm \thepage\hfil \sl \leftmark}
+      \def\@oddhead{\hbox{}\sl \rightmark \hfil \rm\thepage}
+      \def\chaptermark##1{\markboth {\uppercase{\ifnum \c@secnumdepth >\m@ne

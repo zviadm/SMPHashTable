@@ -1,0 +1,66 @@
+\chapter{Introduction}
+\label{chap:intro}
+
+Hash tables are heavily used data structures in distributed data centers and web servers. This thesis focuses
+on fixed-size hash tables that support eviction of its elements using a Least Recently Used (LRU) list. Such hash tables are a good way to
+implement a key/value cache. One of the best known distributed applications that uses a key/value cache is 
+\memcached{} \cite{memcached}. \memcached{} is an in-memory cache for Web applications that store  
+data, page rendering results, and other information that can be cached and is expensive to recalculate.
+
+With the rapid growth of the World Wide Web and large-scale applications, more scalability is demanded from data structures. 
+Although many data structures and applications are already developed with the scalability requirement in mind, 
+they are usually designed for distributed systems that consist of multiple different machines. The recent emergence of multi-core 
+architectures demands that we rethink scalability not just for scaling across multiple machines but also across 
+multiple cores of the same machine. 
+
+This thesis explores the use of \textit{computation migration} to increase data structure performance on 
+multi-core processors. This technique can also be applied to structures other than the hash table. We chose the 
+hash table to demonstrate the benefits of this idea because of its overall simplicity, ease of implementation and relevance.
+
+\section{Motivation}
+
+Since CPU frequencies can no longer be significantly increased due to heat and power dissipation challenges, 
+processors are now becoming more powerful by having more and more separate computation cores. Thus, if we want to 
+get better performance as the number of cores increases, we need to think of ways to make our applications more scalable across 
+multiple computation cores. One of the first steps in this challenge is to rethink the current data structures with 
+the multi-core model in mind.  
+
+In a multi-core processor that supports shared memory each core has its own data cache to make memory accesses faster. 
+However, if multiple cores are modifying and reading the same data, it is becoming more and more expensive to keep the caches 
+coherent. Clearly, as the number of cores continues to increase, it will become more and more expensive to access and modify 
+the same data using multiple cores. Also most of the current processors have NUMA architecture, thus localized memory accesses
+are faster than random memory accesses.
+
+In the 48-core machine used in thesis, a core can access its L1 cache in 3 cycles, its L2 cache in 14 cycles, and the shared on-chip 
+L3 cache in 28 cycles. DRAM access latencies vary, from 122 cycles for a core to read from its local DRAM to 503 cycles for a 
+core to read from the DRAM of the chip farthest from it on the interconnect. Since accesses from caches are much faster than 
+accesses from the DRAM, reducing the number of cache misses can have large impact on overall performance of an application.
+
+
+\section{This Thesis}
+
+This thesis introduces a new hash table, which we call \cphash{}, which uses computation migration to avoid unnecessary data transfer between cores 
+and increase performance and scalability by reducing total number of cache misses. Instead of all the cores accessing shared data, \cphash{} splits the 
+contents of the data structure into multiple parts and assign a core to each particular part of the structure. \cphash{} uses message passing 
+to pass the lookup/insert operation to the core that is assigned the data needed for that particular operation. \cphash{} assumes that computation migration will 
+work well when modifiable data contents are large and the computation description is small. This thesis strives to prove this 
+assumption by providing an implementation of \cphash{} that uses computation migration and demonstrating its performance gains. 
+
+On the 48-core machine we compare the performance of \cphash{} to the performance of a standard fine grain lock implementation of a hash table and 
+observe benefits due to two main reasons: Decrease in cache capacity misses (for small data sets) and decrease in cache coherency misses (for all data sets).
+Cache capacity misses are reduced since \cphash{} avoids data transfers and thus data duplication in different caches. Cache coherency misses
+are reduced due to caching common partition data that are modified, which in \cphash{} is the head of the LRU list. Both the lookup and the insert 
+operations access and modify the head of the LRU list.
+
+This thesis also introduces a memcached style key/value cache server, which we call \cpserver{}, which uses \cphash{} as its hash table. We compare the performance of \cpserver{} to the
+performance of a key/value cache server that uses a hash table with standard fine grain locks. We also compare the performance of \cpserver{} against \memcached{}.
+We observe increase in throughput in both cases due to the speedup provided by the \cphash{} hash table implementation. 
+
+\section{Outline}
+
+The remainder of this thesis is structured as follows. Chapter 2 describes the related work. Chapter 3 
+describes the overall design and implementation of \cphash{}. Chapter 4 describes \cphash{}'s memory management 
+algorithm for allocating and storing the hash table contents in memory. Chapter 5 describes design and protocol of \cpserver{}.
+Chapter 6 describes the benchmarking methods and contains a detailed evaluation of the performance gains. In Chapter 7 we discuss future plans for \cphash{}. 
+Finally, Chapter 8 concludes this thesis with an overall perspective and summary of the achieved results. 
+
