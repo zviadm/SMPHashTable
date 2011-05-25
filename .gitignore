@@ -1,6 +1,14 @@
+*~
 *.o
 *.P
 *.swp
+*.aux
+*.bbl
+*.blg
+*.lof
+*.log
+*.lot
+*.toc
 testhashtable
 testhashserver
 benchhashtable
@@ -9,4 +17,3 @@ benchhashserver2
 hashserver
 hashserver2
 benchmemcached
-
