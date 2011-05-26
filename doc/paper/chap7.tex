@@ -1,0 +1,38 @@
+\section{Future Work}
+\label{chap:futurework}
+
+\cphash{} demonstrates that by using computation migration, message passing and careful memory management techniques it is
+possible to create a scalable hash table implementation for the multi-core NUMA architecture machines. However, there is still
+room for improvement of \cphash{}'s implementation. 
+
+\subsection{Dynamic Adjusting of the Server Threads}
+
+One issue with the current design is that a fixed number of cores must to be dedicated to run the server threads. 
+A better approach would be to have an algorithm that would dynamically decide on how many cores to use for the server threads, 
+depending on the workload. Such dynamic adjustment of the server threads would make it possible to use less power and CPU resources
+when the workload is small. Saving power is essential for any data center due to reduced cost. Using less CPU resources
+would make it possible to run other services on the same machine when there is not much load on the hash table. 
+
+Dynamic adjustment of the server threads could also provide higher performance. 
+If the CPU resources needed by the client threads to generate the queries is less than the resources needed by the server threads 
+to complete the queries, then it is better to dedicate more cores to run the server threads than to the client threads. 
+On the other hand, if the client threads need more CPU resources to generate the queries, it is better to dedicate fewer cores to run
+the server threads and use more cores for the client threads. 
+
+We have not tried implementing dynamic adjustment of server threads due to time constraint reasons; however, we tried
+a different approach to avoid wasting the CPU resources. We tried utilizing CPUs with Intel's HyperThreading technology to run 
+the server and the client threads on two separate logical cores of the same physical core. The problem we discovered with this approach is that 
+since the logical cores share the L2 cache, the client thread can easily pollute the whole cache thus nullifying most of the benefits of the \cphash{}
+design. This is especially true for an application such as \cpserver{}, since the connection buffers themselves can take most of the space in the cache.
+
+\subsection{Message Passing}
+
+The scalability and performance of message passing is important for \cphash{}. The current implementation is simple and does not use
+any hardware specific operations to further speedup the communication between the server and the client threads. One possible improvement is to
+forcefully flush the caches when the buffer is full, this way the overhead of sending the message would shift more from the receiver towards the sender. 
+Such an approach could be beneficial to decrease the time spent on reading the message buffers in server threads. Such an approach could potential provide
+more scalable message passing implementation. 
+
+Another idea to improve the current message passing implementation is to change the design of the circular buffer to eliminate the read and write indexes
+to further decrease average cache misses spent on message passing per each query. 
+

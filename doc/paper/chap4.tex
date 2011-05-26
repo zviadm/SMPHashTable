@@ -1,0 +1,69 @@
+\section{Memory Management}
+
+To implement a non-intrusive hash table, in addition to storing keys and pointers to the values, the actual value data
+needs to be stored. In order to store arbitrary length values, \cphash{} needs the ability to allocate space in memory 
+when inserting an element and free it when \cphash{} evicts an element from the hash table. We also need to decide 
+which thread (server or client) should be responsible for data allocation and which thread should be responsible 
+for copying the data into the allocated space. Freeing values is complicated by the fact that each value can be in use 
+in multiple client threads; thus, we need some way of determining when it is actually safe to free and reuse 
+the space used by a data value.
+
+Section 4.1 discusses allocation strategies and provides details on our actual implementation. Section 4.2 
+discuses strategies for freeing and deallocation. In Section 4.3 we discuss the alternative strategy of reference counting.
+
+\subsection{Allocation}
+
+The best place to do space allocation is in the server thread since each server is responsible for a single partition and 
+implementing space allocation would be as simple as implementing a space allocator for a single-threaded hash table. 
+However, performing the actual data copying in the server thread would be a bad idea since for large values it would 
+wipe-out the local hardware cache of the server core. Thus, in \cphash{} the space allocation is done in the server 
+thread and the actual data copying is performed in the client thread. To perform an \texttt{Insert} operation, the client sends the \texttt{key} and 
+the \texttt{size} of the value to the server. The server allocates \texttt{size} amount of space in memory and returns 
+the pointer to the allocated memory to the client. The allocated space is marked as NOT READY and will not be used until it is marked as READY. 
+The client receives the pointer, copies the data to the location pointed by the given pointer, and marks that space as READY. 
+The current \cphash{} implementation this marking is done using atomic operations. In Section 4.3 we discuss an alternative 
+to it using message passing.
+
+There are many different ways to perform data allocation in the server thread. The simplest way is to use C standard 
+\texttt{malloc}/\texttt{free} operations. However, in a heavily multi-threaded environment the libc standard \texttt{malloc} performs poorly. 
+A better alternative could be to use memory allocators designed for multi-threaded programs such as streamflow \cite{streamflow}, 
+or tcmalloc \cite{tcmalloc} or any other multi-threaded allocator. However, since in \cphash{} the total space is split equally 
+between partitions, we decided to just pre-allocate all of the available space for each partition and then use the standard
+single-threaded binning allocator \cite{binallocator} inside that pre-allocated space. This way the server threads will never have to communicate when 
+allocating or freeing space. 
+
+\subsection{Deallocation/Freeing}
+
+When the server thread evicts or deletes an element from the hash table, the space allocated for this value must to be 
+freed so that it can be reused for new elements. It would be incorrect for server thread to just free the allocated space when it evicts or deletes 
+the element. The problem is that if a client requests a \texttt{Lookup} on some element X and gets the pointer to its value, 
+and then the server threads evicts the element X from the hash table before the client is done processing X's value, the client will have a dangling 
+pointer pointing to unallocated space, potentially causing all kinds of errors. To resolve this issue, \cphash{} counts references to the elements. 
+Each element in the hash table has a reference count. Every time a client requests a \texttt{Lookup} of an element, the server thread increases the element's 
+reference count. When the client is done with the item it decreases the reference count of the given element. When the reference count reaches 0, 
+the space can be safely deallocated. We implemented reference counting using atomic operations.
+
+The deallocation must be done by server threads, otherwise there would be race conditions between allocations 
+and deallocations for a partition. When a client dereferences an element and its reference count becomes zero we need 
+some way to schedule an element for freeing in the server thread. It is worth noting that this is, in general, a highly unlikely 
+scenario, especially if clients process elements quickly, since if an element was just accessed in the hash table, it 
+would become the most-recently used item thus significantly decreasing chances of its eviction before the client is done processing it.
+
+To implement scheduling of elements for freeing, we implemented a lock-free singly-linked list using atomic operations that holds 
+the list of elements that can be safely freed. Scheduled elements are freed in the server thread before the next allocation.
+
+\subsection{Atomic Operations VS Message Passing}
+
+As mentioned in previous sections we implemented the necessary synchronization for memory management using hardware-supported atomic 
+operators. Another way to implement reference counting could have been using message passing. Instead of the client thread 
+updating the reference count, it would send a message to the appropriate server to update the reference counter. However, in this 
+case, message passing is not the best option for several reasons. Since message passing is implemented 
+using shared memory and without special hardware support, sending a single message is just as expensive as a single write 
+to a memory location. Also in most common cases when a client needs to update the reference count, the counter is already in 
+the client's cache thus making those atomic operations fast. The message passing version could become a more viable option 
+if the hardware had some special support for fast core-to-core communication.
+
+Another alternative way to implement reference counting would be to send a single message to the server to release all pointers 
+per batch. However, that would require the server thread to store all the pointers allocated during the last batch for each client. 
+This would impose a significant overhead on the server's local hardware cache, especially if the batches are large. Also it would provide less 
+flexibility for a client to decide when to release values.
