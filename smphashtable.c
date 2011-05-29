@@ -19,6 +19,7 @@
 #define HASHOP_MASK       0xF000000000000000
 #define HASHOP_LOOKUP     0x0000000000000000 
 #define HASHOP_INSERT     0x1000000000000000 
+#define HASHOP_RELEASE    0x2000000000000000 
 #define INSERT_MSG_LENGTH 2
 
 #define DATA_READY_MASK   0x8000000000000000
@@ -108,7 +109,8 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size);
 void hash_remove(struct partition *p, struct elem *e);
 void lru(struct partition *p, struct elem *e);
 
-void value_retain_(struct elem *e);
+void smp_value_release_(struct elem *e);
+
 void value_release_(struct elem *e);
 int value_is_ready_(struct elem *e);
 
@@ -172,7 +174,6 @@ void destroy_hash_table(struct hash_table *hash_table)
 
 void init_hash_partition(struct hash_table *hash_table, int s)
 {
-  //set_affinity(21 + s);
   struct partition *p = &hash_table->partitions[s];
   assert((unsigned long)p % CACHELINE == 0);
   p->nservers = hash_table->nservers;
@@ -204,7 +205,7 @@ void destroy_hash_partition(struct partition *p)
   struct lrulist *eh = &p->lru;
   struct elem *e = TAILQ_FIRST(eh);
   while (e != NULL) {
-    value_release_(e);
+    smp_value_release_(e);
     e = TAILQ_NEXT(e, lru);
   }
   localmem_destroy(&p->mem);
@@ -301,8 +302,8 @@ void *hash_table_server(void* args)
               e = hash_lookup(p, localbuf[k] & (HASHOP_MASK - 1));          
               if ((e != NULL) && (value_is_ready_(e))) {
                 p->nhits++;
+                e->ref_count++;
                 value = (unsigned long)e->value;
-                value_retain_(e);
               }
               k++;
               break;
@@ -323,6 +324,13 @@ void *hash_table_server(void* args)
               k += INSERT_MSG_LENGTH;
               break;
             }
+          case HASHOP_RELEASE:
+            {
+              struct elem *e = (struct elem *)(localbuf[k] & (HASHOP_MASK - 1));
+              smp_value_release_(e);
+              k++;
+              break;
+            }
           default:
             assert(0);
             break;
@@ -334,7 +342,7 @@ void *hash_table_server(void* args)
 
       buffer_write_all(&boxes[i].boxes[s].out, j, localbuf, 1);
 
-      if (readcnt[i] < 4) readcnt[i] += BUFFER_FLUSH_COUNT;
+      if (readcnt[i] <= 0) readcnt[i] += BUFFER_FLUSH_COUNT;
     }
   }
   return 0;
@@ -343,8 +351,10 @@ void *hash_table_server(void* args)
 void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key)
 {
   uint64_t res;
-  int s = hash_get_server(hash_table, key | HASHOP_LOOKUP);
-  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 1, (uint64_t *)&key, 1);
+  uint64_t msg_data = key | HASHOP_LOOKUP;
+
+  int s = hash_get_server(hash_table, key);
+  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 1, &msg_data, 1);
 
   while (buffer_read_all(&hash_table->boxes[client_id].boxes[s].out, 1, &res) == 0) {
     _mm_pause();
@@ -473,8 +483,8 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
   struct elem *e = hash_lookup(&hash_table->partitions[s], key);
   if (e != NULL && value_is_ready_(e)) {
     hash_table->partitions[s].nhits++;
+    __sync_add_and_fetch(&(e->ref_count), 1);
     value = e->value;
-    value_retain_(e);
   }
   anderson_release(&hash_table->partitions[s].lock, &extra);
   return value;
@@ -498,6 +508,23 @@ void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size
 /**
  * Value Memory Management Operations
  */
+void smp_value_release_(struct elem *e)
+{
+  e->ref_count = (e->ref_count & (DATA_READY_MASK - 1)) - 1;
+  if (e->ref_count == 0) {
+    localmem_free(e);
+  }
+}
+
+void smp_value_release(struct hash_table *hash_table, int client_id, void *ptr)
+{
+  struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
+  uint64_t msg_data = (uint64_t)e | HASHOP_RELEASE;
+
+  int s = hash_get_server(hash_table, e->key);
+  buffer_write(&hash_table->boxes[client_id].boxes[s].in, msg_data);
+}
+
 void value_release(void *ptr) 
 {
   struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
@@ -513,11 +540,6 @@ void value_mark_ready(void *ptr) {
   if (ref_count == 0) {
     localmem_async_free(e);
   }
-}
-
-void value_retain_(struct elem *e)
-{
-  __sync_add_and_fetch(&(e->ref_count), 1);
 }
 
 void value_release_(struct elem *e) {

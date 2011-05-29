@@ -82,6 +82,14 @@ void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key ke
 void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, void **values);
 
 /**
+ * smp_value_release: Release value
+ * After client is done with looked up value from hash table, it must
+ * release it so that if value is evicted its space can be reused
+ */
+void smp_value_release(struct hash_table *hash_table, int client_id, void *ptr);
+
+
+/**
  * locking_hash_lookup: Lookup key/value pair in hash table
  * @hash_table: pointer to the hash table structure
  * @client_id: client id to use to communicate with hash table servers
