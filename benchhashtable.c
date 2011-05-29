@@ -235,12 +235,10 @@ void handle_query_result(struct hash_query *query, void *value)
       if (val[0] != query->key) {
         printf("ERROR: values do not match: %ld, should be %ld\n", val[0], query->key);
       }
-      value_release(val);
     }
   } else {
     assert(val != NULL);
     val[0] = query->key;
-    value_mark_ready(val);
   }
 }
 
@@ -263,6 +261,9 @@ void * client_design1(void *args)
     }
 
     handle_query_result(&query, value);
+    if (value != NULL) {
+      mp_release_value(hash_table, cid, value);
+    }
   }
   return NULL;
 }
@@ -287,6 +288,9 @@ void * client_design2(void *args)
 
     for (int k = 0; k < nqueries; k++) {
       handle_query_result(&queries[k], values[k]);
+      if (values[k] != NULL) {
+        mp_release_value(hash_table, cid, values[k]);
+      }
     }
     i += nqueries;
   }
@@ -313,6 +317,13 @@ void * client_design3(void *args)
     }
 
     handle_query_result(&query, value);
+    if (value != NULL) {
+      if (query.optype == OPTYPE_LOOKUP) {
+        atomic_release_value(value);
+      } else {
+        atomic_mark_ready(value);
+      }
+    }
   }
   return NULL;
 }

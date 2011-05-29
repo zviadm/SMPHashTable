@@ -82,14 +82,6 @@ void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key ke
 void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, void **values);
 
 /**
- * smp_value_release: Release value
- * After client is done with looked up value from hash table, it must
- * release it so that if value is evicted its space can be reused
- */
-void smp_value_release(struct hash_table *hash_table, int client_id, void *ptr);
-
-
-/**
  * locking_hash_lookup: Lookup key/value pair in hash table
  * @hash_table: pointer to the hash table structure
  * @client_id: client id to use to communicate with hash table servers
@@ -118,19 +110,11 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
  */
 void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size);
 
-/**
- * value_release: Release value
- * After client is done with looked up value from hash table, it must
- * release it so that if value is evicted its space can be reused
- */
-void value_release(void *ptr);
+void mp_release_value(struct hash_table *hash_table, int client_id, void *ptr);
+void mp_flush_releases(struct hash_table *hash_table, int client_id);
 
-/**
- * value_mark_ready: Mark value to be ready to use
- * After client copies data over to newly allocated element it must
- * mark it as ready to use
- */
-void value_mark_ready(void *ptr);
+void atomic_release_value(void *ptr);
+void atomic_mark_ready(void *ptr);
 
 /**
  * Stats functions

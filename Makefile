@@ -3,7 +3,8 @@ CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 $(DFLAGS)
 LFLAGS = -lpthread -lm -lrt
 MAKEDEPEND = gcc -M $(CFLAGS) -o $*.d $<
 
-LIBSRC = smphashtable.c onewaybuffer.c localmem.c \
+LIBSRC = smphashtable.c onewaybuffer.c \
+				 partition.c localmem.c \
 				 util.c alock.c ia32msr.c ia32perf.c
 SRCS = $(LIBSRC) \
 			 testhashtable.c \
@@ -26,8 +27,8 @@ benchhashserver: %: %.o util.o hashclient.o
 	gcc -o $@ $^ /usr/local/lib/libmemcached.a $(LFLAGS)
 
 %.P : %.c
-				$(MAKEDEPEND)
-				@sed 's/\($*\)\.o[ :]*/\1.o $@ : /g' < $*.d > $@; \
+				-$(MAKEDEPEND)
+				-@sed 's/\($*\)\.o[ :]*/\1.o $@ : /g' < $*.d > $@; \
 					rm -f $*.d; [ -s $@ ] || rm -f $@
 
 include $(SRCS:.c=.P)

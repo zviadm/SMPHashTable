@@ -26,7 +26,6 @@ int nclients        = 1;
 int batch_size      = 1000;
 int nelems          = 100000;
 size_t size         = 6400000;
-struct hash_table *hash_table;
 int port            = 2117;
 int verbose         = 1;
 
@@ -46,6 +45,9 @@ struct client_data {
 };
 
 struct client_data cdata[MAX_CLIENTS];
+
+// Hash Table Data Structure
+struct hash_table *hash_table;
 
 // Constant value to return when no value is found in key/value store
 const uint32_t NULL_VALUE = 0;

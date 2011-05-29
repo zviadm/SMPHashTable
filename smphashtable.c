@@ -6,14 +6,13 @@
 #include <string.h>
 #include <sys/queue.h>
 
-#include "alock.h"
 #include "hashprotocol.h"
 #include "localmem.h"
 #include "onewaybuffer.h"
+#include "partition.h"
 #include "smphashtable.h"
 #include "util.h"
 
-#define BUCKET_LOAD       (2 * 128) // Min Element Size is 128 bytes
 #define SERVER_READ_COUNT BUFFER_FLUSH_COUNT 
 
 #define HASHOP_MASK       0xF000000000000000
@@ -23,44 +22,6 @@
 #define INSERT_MSG_LENGTH 2
 
 #define DATA_READY_MASK   0x8000000000000000
-
-/**
- * Hash Table Storage Data Structures
- * struct elem       - element in table
- * struct bucket     - a bucket in a partition
- * struct partition  - hash table partition for server
- */
-struct elem {
-  // size must be 48
-  hash_key key;
-  size_t size;
-  TAILQ_ENTRY(elem) chain;
-  TAILQ_ENTRY(elem) lru;
-  
-  // data goes here
-  uint64_t ref_count;
-  char value[0];
-};
-
-struct bucket {
-  TAILQ_HEAD(elist, elem) chain;
-};
-
-struct partition {
-  int nservers;
-  int nhash;
-  size_t max_size;
-  struct bucket *table;
-  TAILQ_HEAD(lrulist, elem) lru;
-
-  // stats
-  int nhits;
-  int nlookups;
-  int ninserts;
-
-  struct localmem mem; // local memory
-  struct alock lock;   // partition lock for locking
-} __attribute__ ((aligned (CACHELINE)));
 
 /**
  * Server/Client Message Passing Data Structures
@@ -100,19 +61,14 @@ struct hash_table {
 };
 
 // Forward declarations
-void init_hash_partition(struct hash_table *hash_table, int s);
-void destroy_hash_partition(struct partition *p);
 void *hash_table_server(void* args);
 
-struct elem * hash_lookup(struct partition *p, hash_key key);
-struct elem * hash_insert(struct partition *p, hash_key key, int size);
-void hash_remove(struct partition *p, struct elem *e);
-void lru(struct partition *p, struct elem *e);
-
-void smp_value_release_(struct elem *e);
-
-void value_release_(struct elem *e);
-int value_is_ready_(struct elem *e);
+int is_value_ready(struct elem *e);
+void mp_release_value_(struct elem *e);
+void mp_release_value(struct hash_table *hash_table, int client_id, void *ptr);
+void atomic_release_value_(struct elem *e);
+void atomic_release_value(void *ptr);
+void atomic_mark_ready(void *ptr);
 
 /**
  * hash_get_server: returns server that should handle given key
@@ -120,14 +76,6 @@ int value_is_ready_(struct elem *e);
 static inline int hash_get_server(const struct hash_table *hash_table, hash_key key)
 {
   return key % hash_table->nservers;
-}
-
-/**
- * hash_get_bucket: returns bucket were given key is or should be placed
- */
-static inline int hash_get_bucket(const struct partition *p, hash_key key)
-{
-  return key % p->nhash;
 }
 
 struct hash_table *create_hash_table(size_t max_size, int nservers) 
@@ -146,7 +94,7 @@ struct hash_table *create_hash_table(size_t max_size, int nservers)
   hash_table->partitions = memalign(CACHELINE, nservers * sizeof(struct partition));
   hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
   for (int i = 0; i < hash_table->nservers; i++) {
-    init_hash_partition(hash_table, i);
+    init_hash_partition(&hash_table->partitions[i], max_size / nservers, nservers);
   }
 
   hash_table->threads = (pthread_t *)malloc(nservers * sizeof(pthread_t));
@@ -157,7 +105,7 @@ struct hash_table *create_hash_table(size_t max_size, int nservers)
 void destroy_hash_table(struct hash_table *hash_table)
 {
   for (int i = 0; i < hash_table->nservers; i++) {
-    destroy_hash_partition(&hash_table->partitions[i]);
+    destroy_hash_partition(&hash_table->partitions[i], atomic_release_value_);
   }
   free(hash_table->partitions);
 
@@ -172,46 +120,6 @@ void destroy_hash_table(struct hash_table *hash_table)
   free(hash_table);
 }
 
-void init_hash_partition(struct hash_table *hash_table, int s)
-{
-  struct partition *p = &hash_table->partitions[s];
-  assert((unsigned long)p % CACHELINE == 0);
-  p->nservers = hash_table->nservers;
-  p->max_size = hash_table->max_size / hash_table->nservers;
-
-  // below is a trick to make GCD of p->nhash and hash_table->nservers equal to 1
-  // it can be proved that if GCD of nhash and nservers is 1 then, hash_get_server and
-  // hash_get_bucket will be unbiased when input is random
-  p->nhash = ceil((double)max(10.0, p->max_size / BUCKET_LOAD) / hash_table->nservers) * hash_table->nservers - 1;
-
-  p->nhits = 0;
-  p->nlookups = 0;
-  p->ninserts = 0;
-  hash_table->overhead += p->nhash * sizeof(struct bucket);
-
-  p->table = memalign(CACHELINE, p->nhash * sizeof(struct bucket));
-  assert((unsigned long) &(p->table[0]) % CACHELINE == 0);
-  for (int i = 0; i < p->nhash; i++) {
-    TAILQ_INIT(&(p->table[i].chain));
-  }
-
-  TAILQ_INIT(&p->lru);
-  localmem_init(&p->mem, p->max_size);
-  anderson_init(&p->lock, hash_table->nservers);
-}
-
-void destroy_hash_partition(struct partition *p)
-{
-  struct lrulist *eh = &p->lru;
-  struct elem *e = TAILQ_FIRST(eh);
-  while (e != NULL) {
-    smp_value_release_(e);
-    e = TAILQ_NEXT(e, lru);
-  }
-  localmem_destroy(&p->mem);
-
-  free(p->table);
-}
 
 void start_hash_table_servers(struct hash_table *hash_table, int first_core) 
 {
@@ -231,6 +139,14 @@ void stop_hash_table_servers(struct hash_table *hash_table)
 {
   int r;
   void *value;
+
+  // flush all client buffers
+  for (int i = 0; i < hash_table->nservers; i++) {
+    for (int k = 0; k < hash_table->nclients; k++) {
+      buffer_flush(&hash_table->boxes[k].boxes[i].in);
+    }
+  }
+
   hash_table->quitting = 1;
   for (int i = 0; i < hash_table->nservers; i++) {
     r = pthread_join(hash_table->threads[i], &value);
@@ -299,13 +215,16 @@ void *hash_table_server(void* args)
           case HASHOP_LOOKUP:
             {
               p->nlookups++;
-              e = hash_lookup(p, localbuf[k] & (HASHOP_MASK - 1));          
-              if ((e != NULL) && (value_is_ready_(e))) {
+              e = hash_lookup(p, localbuf[k] & (~HASHOP_MASK));
+              if ((e != NULL) && (is_value_ready(e))) {
                 p->nhits++;
                 e->ref_count++;
                 value = (unsigned long)e->value;
               }
               k++;
+
+              localbuf[j] = value;
+              j++;
               break;
             }
           case HASHOP_INSERT:
@@ -319,15 +238,21 @@ void *hash_table_server(void* args)
               }
 
               p->ninserts++;
-              e = hash_insert(p, localbuf[k] & (HASHOP_MASK - 1), localbuf[k + 1]);
-              if (e != NULL) value = (unsigned long)e->value;
+              e = hash_insert(p, localbuf[k] & (~HASHOP_MASK), localbuf[k + 1], mp_release_value_);
+              if (e != NULL) {
+                e->ref_count = DATA_READY_MASK | 2; 
+                value = (unsigned long)e->value;
+              }
               k += INSERT_MSG_LENGTH;
+
+              localbuf[j] = value;
+              j++;
               break;
             }
           case HASHOP_RELEASE:
             {
-              struct elem *e = (struct elem *)(localbuf[k] & (HASHOP_MASK - 1));
-              smp_value_release_(e);
+              struct elem *e = (struct elem *)(localbuf[k] & (~HASHOP_MASK));
+              mp_release_value_(e);
               k++;
               break;
             }
@@ -335,9 +260,6 @@ void *hash_table_server(void* args)
             assert(0);
             break;
         }
-
-        localbuf[j] = value;
-        j++;
       }
 
       buffer_write_all(&boxes[i].boxes[s].out, j, localbuf, 1);
@@ -481,7 +403,7 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
   anderson_acquire(&hash_table->partitions[s].lock, &extra);
   hash_table->partitions[s].nlookups++;
   struct elem *e = hash_lookup(&hash_table->partitions[s], key);
-  if (e != NULL && value_is_ready_(e)) {
+  if (e != NULL && is_value_ready(e)) {
     hash_table->partitions[s].nhits++;
     __sync_add_and_fetch(&(e->ref_count), 1);
     value = e->value;
@@ -497,8 +419,9 @@ void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size
   int extra;
   anderson_acquire(&hash_table->partitions[s].lock, &extra);
   hash_table->partitions[s].ninserts++;
-  struct elem *e = hash_insert(&hash_table->partitions[s], key, size);
+  struct elem *e = hash_insert(&hash_table->partitions[s], key, size, atomic_release_value_);
   if (e != NULL) {
+    e->ref_count = DATA_READY_MASK | 1;
     value = e->value;
   }
   anderson_release(&hash_table->partitions[s].lock, &extra);
@@ -508,110 +431,60 @@ void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size
 /**
  * Value Memory Management Operations
  */
-void smp_value_release_(struct elem *e)
+int is_value_ready(struct elem *e)
 {
-  e->ref_count = (e->ref_count & (DATA_READY_MASK - 1)) - 1;
+  return (e->ref_count & DATA_READY_MASK) == 0 ? 1 : 0;
+}
+
+void mp_release_value_(struct elem *e)
+{
+  e->ref_count = (e->ref_count & (~DATA_READY_MASK)) - 1;
   if (e->ref_count == 0) {
     localmem_free(e);
   }
 }
 
-void smp_value_release(struct hash_table *hash_table, int client_id, void *ptr)
+void mp_release_value(struct hash_table *hash_table, int client_id, void *ptr)
 {
   struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
   uint64_t msg_data = (uint64_t)e | HASHOP_RELEASE;
+  assert((uint64_t)e == (msg_data & (~HASHOP_MASK)));
 
   int s = hash_get_server(hash_table, e->key);
   buffer_write(&hash_table->boxes[client_id].boxes[s].in, msg_data);
 }
 
-void value_release(void *ptr) 
+void mp_flush_releases(struct hash_table *hash_table, int client_id)
 {
-  struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
-  uint64_t ref_count = __sync_sub_and_fetch(&(e->ref_count), 1);
-  if (ref_count == 0) {
-    localmem_async_free(e);
+  for (int i = 0; i < hash_table->nservers; i++) {
+    buffer_flush(&hash_table->boxes[client_id].boxes[i].in);
   }
 }
 
-void value_mark_ready(void *ptr) {
-  struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
-  uint64_t ref_count = __sync_and_and_fetch(&(e->ref_count), (DATA_READY_MASK - 1));
-  if (ref_count == 0) {
-    localmem_async_free(e);
-  }
-}
-
-void value_release_(struct elem *e) {
+void atomic_release_value_(struct elem *e)
+{
   uint64_t ref_count = __sync_sub_and_fetch(&(e->ref_count), 1);
   if (ref_count == 0) {
     localmem_free(e);
   }
 }
 
-int value_is_ready_(struct elem *e)
+void atomic_release_value(void *ptr)
 {
-  return (e->ref_count & DATA_READY_MASK) == 0 ? 1 : 0;
-}
-
-/**
- * Hash Storage Operations
- */
-struct elem * hash_lookup(struct partition *p, hash_key key)
-{
-  struct elist *eh = &(p->table[hash_get_bucket(p, key)].chain);
-  struct elem *e = TAILQ_FIRST(eh);
-  while (e != NULL) {
-    if (e->key == key) {
-      lru(p, e);
-      return e;
-    }
-    e = TAILQ_NEXT(e, chain);
+  struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
+  uint64_t ref_count = __sync_sub_and_fetch(&(e->ref_count), 1);
+  if (ref_count == 0) {
+    localmem_async_free(e);
   }
-  return NULL;
 }
 
-struct elem * hash_insert(struct partition *p, hash_key key, int size)
+void atomic_mark_ready(void *ptr)
 {
-  struct elist *eh = &(p->table[hash_get_bucket(p, key)].chain);
-  struct elem *e = hash_lookup(p, key);
-
-  if (e != NULL) {
-    hash_remove(p, e);
-  } 
-
-  // try to allocate space for new value
-  while ((e = localmem_alloc(&p->mem, sizeof(struct elem) + size)) == NULL) {
-    // TODO: we might want to do something more smart here
-    // i.e. remove only large enough elements or do not do check every time
-    // or even keep separate lrus for different size elements
-    // also if it is taking too long to allocate just discard it
-    struct elem *l = TAILQ_LAST(&p->lru, lrulist);
-    if (l == NULL) return NULL;
-    hash_remove(p, l);
+  struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
+  uint64_t ref_count = __sync_and_and_fetch(&(e->ref_count), (~DATA_READY_MASK));
+  if (ref_count == 0) {
+    localmem_async_free(e);
   }
-
-  e->key = key;
-  e->ref_count = DATA_READY_MASK | 1; 
-  TAILQ_INSERT_TAIL(eh, e, chain);
-  TAILQ_INSERT_HEAD(&p->lru, e, lru);
-  return e;
-}
-
-void hash_remove(struct partition *p, struct elem *e)
-{
-  struct elist *eh = &(p->table[hash_get_bucket(p, e->key)].chain);
-  TAILQ_REMOVE(eh, e, chain);
-  TAILQ_REMOVE(&p->lru, e, lru);
-  
-  value_release_(e);
-}
-
-void lru(struct partition *p, struct elem *e)
-{
-  assert(e);
-  TAILQ_REMOVE(&p->lru, e, lru);
-  TAILQ_INSERT_HEAD(&p->lru, e, lru);
 }
 
 /**
