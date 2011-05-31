@@ -4,7 +4,7 @@ LFLAGS = -lpthread -lm -lrt
 MAKEDEPEND = gcc -M $(CFLAGS) -o $*.d $<
 
 LIBSRC = smphashtable.c onewaybuffer.c \
-				 partition.c localmem.c \
+				 partition.c localmem.c mpbuffers.c \
 				 util.c alock.c ia32msr.c ia32perf.c
 SRCS = $(LIBSRC) \
 			 testhashtable.c \
