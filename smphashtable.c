@@ -8,7 +8,7 @@
 
 #include "hashprotocol.h"
 #include "localmem.h"
-#include "onewaybuffer.h"
+#include "mpbuffers.h"
 #include "partition.h"
 #include "smphashtable.h"
 #include "util.h"
@@ -16,9 +16,9 @@
 #define SERVER_READ_COUNT BUFFER_FLUSH_COUNT 
 
 #define HASHOP_MASK       0xF000000000000000
-#define HASHOP_LOOKUP     0x0000000000000000 
-#define HASHOP_INSERT     0x1000000000000000 
-#define HASHOP_RELEASE    0x2000000000000000 
+#define HASHOP_LOOKUP     0x1000000000000000 
+#define HASHOP_INSERT     0x2000000000000000 
+#define HASHOP_RELEASE    0x3000000000000000 
 #define INSERT_MSG_LENGTH 2
 
 #define DATA_READY_MASK   0x8000000000000000
@@ -27,8 +27,8 @@
  * Server/Client Message Passing Data Structures
  */
 struct box {
-  struct onewaybuffer in;
-  struct onewaybuffer out;
+  struct inputbuffer in;
+  struct outputbuffer out;
 }  __attribute__ ((aligned (CACHELINE)));
 
 struct box_array {
@@ -143,7 +143,7 @@ void stop_hash_table_servers(struct hash_table *hash_table)
   // flush all client buffers
   for (int i = 0; i < hash_table->nservers; i++) {
     for (int k = 0; k < hash_table->nclients; k++) {
-      buffer_flush(&hash_table->boxes[k].boxes[i].in);
+      inpb_flush(&hash_table->boxes[k].boxes[i].in);
     }
   }
 
@@ -166,9 +166,6 @@ int create_hash_table_client(struct hash_table *hash_table)
   for (int i = 0; i < hash_table->nservers; i++) {
     memset((void*)&hash_table->boxes[client].boxes[i], 0, sizeof(struct box));
     assert((unsigned long) &hash_table->boxes[client].boxes[i].in % CACHELINE == 0);
-    assert((unsigned long) &hash_table->boxes[client].boxes[i].in.rd_index % CACHELINE == 0);
-    assert((unsigned long) &hash_table->boxes[client].boxes[i].in.wr_index % CACHELINE == 0);
-    assert((unsigned long) &hash_table->boxes[client].boxes[i].in.tmp_wr_index % CACHELINE == 0);
     assert((unsigned long) &hash_table->boxes[client].boxes[i].out % CACHELINE == 0);
   }
   
@@ -184,14 +181,10 @@ void *hash_table_server(void* args)
   struct hash_table *hash_table = ((struct thread_args *) args)->hash_table;
   struct partition *p = &hash_table->partitions[s];
   struct box_array *boxes = hash_table->boxes;
-  uint64_t localbuf[2 * ONEWAY_BUFFER_SIZE];
-  int readcnt[MAX_CLIENTS];
+  uint64_t localbuf[INPB_SIZE];
   int quitting = 0;
 
   set_affinity(c);
-
-  // initialize readcnt
-  for (int i = 0; i < MAX_CLIENTS; i++) readcnt[i] = BUFFER_FLUSH_COUNT;
 
   while (quitting == 0) {
     // after server receives quit signal it should make sure to complete all 
@@ -200,15 +193,15 @@ void *hash_table_server(void* args)
 
     int nclients = hash_table->nclients;
     for (int i = 0; i < nclients; i++) {
-      int count = buffer_read_all(&boxes[i].boxes[s].in, (quitting == 0) ? readcnt[i] : ONEWAY_BUFFER_SIZE, localbuf);
+      int count = inpb_read(&boxes[i].boxes[s].in, localbuf);
       if (count == 0) continue;
-      readcnt[i] -= count;
 
       int k = 0;
       int j = 0;
       struct elem *e;
       unsigned long value;
       while (k < count) {
+        //printf("%d - %i - %d - %lx\n", s, i, k, localbuf[k]);
         value = 0;
 
         switch (localbuf[k] & HASHOP_MASK) {
@@ -229,14 +222,6 @@ void *hash_table_server(void* args)
             }
           case HASHOP_INSERT:
             {
-              if (k + INSERT_MSG_LENGTH > count) {
-                // handle scenario when hash insert message gets cut off 
-                int tmpcnt = 
-                  buffer_read_all(&boxes[i].boxes[s].in, k + INSERT_MSG_LENGTH - count, &localbuf[count]);
-                assert(tmpcnt == k + INSERT_MSG_LENGTH - count);
-                readcnt[i] -= tmpcnt;
-              }
-
               p->ninserts++;
               e = hash_insert(p, localbuf[k] & (~HASHOP_MASK), localbuf[k + 1], mp_release_value_);
               if (e != NULL) {
@@ -262,9 +247,7 @@ void *hash_table_server(void* args)
         }
       }
 
-      buffer_write_all(&boxes[i].boxes[s].out, j, localbuf, 1);
-
-      if (readcnt[i] <= 0) readcnt[i] += BUFFER_FLUSH_COUNT;
+      outb_write(&boxes[i].boxes[s].out, j, localbuf);
     }
   }
   return 0;
@@ -272,31 +255,25 @@ void *hash_table_server(void* args)
 
 void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key)
 {
-  uint64_t res;
   uint64_t msg_data = key | HASHOP_LOOKUP;
 
   int s = hash_get_server(hash_table, key);
-  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, 1, &msg_data, 1);
+  inpb_write(&hash_table->boxes[client_id].boxes[s].in, 1, &msg_data);
+  inpb_flush(&hash_table->boxes[client_id].boxes[s].in);
 
-  while (buffer_read_all(&hash_table->boxes[client_id].boxes[s].out, 1, &res) == 0) {
-    _mm_pause();
-  }
-  return (void *)(long)res;
+  return (void *)(long)outb_blocking_read(&hash_table->boxes[client_id].boxes[s].out);
 }
 
 void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, int size)
 {
-  uint64_t res;
   uint64_t msg_data[INSERT_MSG_LENGTH];
   msg_data[0] = (unsigned long)key | HASHOP_INSERT;
   msg_data[1] = (unsigned long)size;
 
   int s = hash_get_server(hash_table, key);
-  buffer_write_all(&hash_table->boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data, 1);
-  while (buffer_read_all(&hash_table->boxes[client_id].boxes[s].out, 1, &res) == 0) {
-    _mm_pause();
-  }
-  return (void *)(long)res;
+  inpb_write(&hash_table->boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data);
+  inpb_flush(&hash_table->boxes[client_id].boxes[s].in);
+  return (void *)(long)outb_blocking_read(&hash_table->boxes[client_id].boxes[s].out);
 }
 
 void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, void **values)
@@ -306,21 +283,13 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
   int *pending_count = (int*)memalign(CACHELINE, hash_table->nservers * sizeof(int));
   memset(pending_count, 0, hash_table->nservers * sizeof(int));
 
-  int *localbuf_index = (int*)memalign(CACHELINE, hash_table->nservers * sizeof(int));
-  int *localbuf_size = (int*)memalign(CACHELINE, hash_table->nservers * sizeof(int));
-  uint64_t *localbuf = 
-    (uint64_t *)memalign(CACHELINE, hash_table->nservers * ONEWAY_BUFFER_SIZE * sizeof(unsigned long));
-  memset(localbuf_index, 0, hash_table->nservers * sizeof(int));
-  memset(localbuf_size, 0, hash_table->nservers * sizeof(int));
-  memset(localbuf, 0, hash_table->nservers * ONEWAY_BUFFER_SIZE * sizeof(unsigned long));
-  
   struct box_array *boxes = hash_table->boxes;
   uint64_t msg_data[INSERT_MSG_LENGTH];
   
   for(int i = 0; i < nqueries; i++) {
     int s = hash_get_server(hash_table, queries[i].key); 
 
-    while (pending_count[s] >= ONEWAY_BUFFER_SIZE) {
+    while (pending_count[s] >= OUTB_SIZE) {
       // we need to read values from server "s" buffer otherwise if we try to write
       // more queries to server "s" it will be blocked trying to write the return value 
       // to the buffer and it can easily cause deadlock between clients and servers
@@ -329,35 +298,26 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
       // in same order that they were queued till we reach elements that were queued for 
       // server "s"
       int ps = hash_get_server(hash_table, queries[pindex].key); 
-      if (localbuf_index[ps] == localbuf_size[ps]) {
-        int count;
-        if ((count = buffer_read_all(&boxes[client_id].boxes[ps].out, ONEWAY_BUFFER_SIZE, &localbuf[ps * ONEWAY_BUFFER_SIZE])) == 0) {
-          // if the read fails it might be that client's output buffer has not been flushed yet
-          // this is very unlikley scenario, since in general server's output is always available
-          // for client when it needs to read it
-          buffer_flush(&boxes[client_id].boxes[ps].in);
-          while ((count = buffer_read_all(&boxes[client_id].boxes[ps].out, ONEWAY_BUFFER_SIZE, &localbuf[ps * ONEWAY_BUFFER_SIZE])) == 0) {
-            _mm_pause();
-          }
-        }
-        pending_count[ps] -= count;
-        localbuf_index[ps] = 0;
-        localbuf_size[ps] = count;
+      uint64_t val;
+      int r = outb_read(&boxes[client_id].boxes[ps].out, &val);
+      if (r == 0) {
+        inpb_flush(&boxes[client_id].boxes[ps].in);
+        val = outb_blocking_read(&boxes[client_id].boxes[ps].out);
       }
-
-      values[pindex] = (void *)(long)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
+      values[pindex] = (void *)(unsigned long)val;
+      pending_count[ps]--;
       pindex++;
-      localbuf_index[ps]++;
     }
 
     switch (queries[i].optype) {
       case OPTYPE_LOOKUP:
-        buffer_write(&boxes[client_id].boxes[s].in, queries[i].key | HASHOP_LOOKUP);
+        msg_data[0] = (uint64_t)queries[i].key | HASHOP_LOOKUP;
+        inpb_write(&boxes[client_id].boxes[s].in, 1, msg_data);
         break;
       case OPTYPE_INSERT:
-        msg_data[0] = (unsigned long)queries[i].key | HASHOP_INSERT;
-        msg_data[1] = (unsigned long)queries[i].size;
-        buffer_write_all(&boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data, 0);
+        msg_data[0] = (uint64_t)queries[i].key | HASHOP_INSERT;
+        msg_data[1] = (uint64_t)queries[i].size;
+        inpb_write(&boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data);
         break;
       default:
         assert(0);
@@ -368,31 +328,24 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
 
   // after queueing all the queries we flush all buffers and read all remaining values
   for (int i = 0; i < hash_table->nservers; i++) {
-    buffer_flush(&boxes[client_id].boxes[i].in);
+    inpb_flush(&boxes[client_id].boxes[i].in);
   }
 
   while (pindex < nqueries) {
     int ps = hash_get_server(hash_table, queries[pindex].key); 
-    if (localbuf_index[ps] == localbuf_size[ps]) {
-      int count;
-      while ((count = buffer_read_all(&boxes[client_id].boxes[ps].out, ONEWAY_BUFFER_SIZE, &localbuf[ps * ONEWAY_BUFFER_SIZE])) == 0) {
-        _mm_pause();
-      }
-
-      pending_count[ps] -= count;
-      localbuf_index[ps] = 0;
-      localbuf_size[ps] = count;
+    assert(pending_count[ps] > 0);
+    uint64_t val;
+    int r = outb_read(&boxes[client_id].boxes[ps].out, &val);
+    if (r == 0) {
+      inpb_flush(&boxes[client_id].boxes[ps].in);
+      val = outb_blocking_read(&boxes[client_id].boxes[ps].out);
     }
-
-    values[pindex] = (void *)(long)localbuf[ps * ONEWAY_BUFFER_SIZE + localbuf_index[ps]];
+    values[pindex] = (void *)(unsigned long)val;
+    pending_count[ps]--;
     pindex++;
-    localbuf_index[ps]++;
   }
 
   free(pending_count);
-  free(localbuf_index);
-  free(localbuf_size);
-  free(localbuf);
 }
 
 void * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
@@ -451,13 +404,13 @@ void mp_release_value(struct hash_table *hash_table, int client_id, void *ptr)
   assert((uint64_t)e == (msg_data & (~HASHOP_MASK)));
 
   int s = hash_get_server(hash_table, e->key);
-  buffer_write(&hash_table->boxes[client_id].boxes[s].in, msg_data);
+  inpb_write(&hash_table->boxes[client_id].boxes[s].in, 1, &msg_data);
 }
 
 void mp_flush_releases(struct hash_table *hash_table, int client_id)
 {
   for (int i = 0; i < hash_table->nservers; i++) {
-    buffer_flush(&hash_table->boxes[client_id].boxes[i].in);
+    inpb_flush(&hash_table->boxes[client_id].boxes[i].in);
   }
 }
 

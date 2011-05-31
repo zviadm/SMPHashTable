@@ -160,7 +160,7 @@ void test3(int use_locking)
   insert(table, use_locking, c1, 1234, 0xFACEDEAD);
   if (use_locking == 0) {
     mp_flush_releases(table, c1);
-    usleep(1000);
+    usleep(100000);
   }
 
   printf("Looking up Elements using Client 2...\n");
@@ -174,7 +174,7 @@ void test3(int use_locking)
   printf("Rewriting Element using Client 2...\n");
   insert(table, use_locking, c2, 123, 0xACEACEACE);
   if (use_locking == 0) {
-    mp_flush_releases(table, c1);
+    mp_flush_releases(table, c2);
     usleep(1000);
   }
 
