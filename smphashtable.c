@@ -193,6 +193,7 @@ void *hash_table_server(void* args)
 
     int nclients = hash_table->nclients;
     for (int i = 0; i < nclients; i++) {
+      //inpb_prefetch(&boxes[(i + 1) % nclients].boxes[s].in);
       int count = inpb_read(&boxes[i].boxes[s].in, localbuf);
       if (count == 0) continue;
 
