@@ -11,6 +11,7 @@ struct inputbuffer {
   volatile uint64_t data[INPB_SIZE];
   uint64_t local_data[INPB_SIZE];
   uint64_t local_index;
+  volatile unsigned long local_waitcnt;
 } __attribute__ ((aligned (CACHELINE)));
 
 struct outputbuffer {
@@ -19,6 +20,7 @@ struct outputbuffer {
   char padding0[CACHELINE - sizeof(unsigned long)];
   unsigned long local_rd_index;
   unsigned long local_wr_index;
+  volatile unsigned long local_waitcnt;
 } __attribute__ ((aligned (CACHELINE)));
 
 void inpb_prefetch(struct inputbuffer *buffer);

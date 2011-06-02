@@ -22,6 +22,7 @@ void inpb_flush(struct inputbuffer *buffer)
   if (buffer->local_index == 0) return;
 
   while (buffer->data[0] != 0) {
+    buffer->local_waitcnt++;
     _mm_pause();
   }
 
@@ -87,6 +88,7 @@ uint64_t outb_blocking_read(struct outputbuffer *buffer)
 {
   uint64_t data;
   while (outb_read(buffer, &data) == 0) {
+    buffer->local_waitcnt++;
     _mm_pause();
   }
   return data;

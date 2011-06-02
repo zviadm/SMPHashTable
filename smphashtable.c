@@ -193,9 +193,6 @@ void *hash_table_server(void* args)
 
     int nclients = hash_table->nclients;
     for (int i = 0; i < nclients; i++) {
-      inpb_prefetch(&boxes[i % nclients].boxes[s].in);
-    }
-    for (int i = 0; i < nclients; i++) {
       int count = inpb_read(&boxes[i].boxes[s].in, localbuf);
       if (count == 0) continue;
 
@@ -253,6 +250,16 @@ void *hash_table_server(void* args)
       outb_write(&boxes[i].boxes[s].out, j, localbuf);
     }
   }
+
+  /*
+  unsigned long tmp0 = 0;
+  unsigned long tmp1 = 0;
+  for (int i = 0; i < hash_table->nclients; i++) {
+    tmp0 += boxes[i].boxes[s].in.local_waitcnt;
+    tmp1 += boxes[i].boxes[s].out.local_waitcnt;
+  }
+  printf("%2d %10lu %10lu\n", s, tmp0, tmp1);
+  */
   return 0;
 }
 
@@ -288,7 +295,7 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
 
   struct box_array *boxes = hash_table->boxes;
   uint64_t msg_data[INSERT_MSG_LENGTH];
-  
+
   for(int i = 0; i < nqueries; i++) {
     int s = hash_get_server(hash_table, queries[i].key); 
 
@@ -336,7 +343,6 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
 
   while (pindex < nqueries) {
     int ps = hash_get_server(hash_table, queries[pindex].key); 
-    assert(pending_count[ps] > 0);
     values[pindex] = (void *)(unsigned long)outb_blocking_read(&boxes[client_id].boxes[ps].out);
     pending_count[ps]--;
     pindex++;
