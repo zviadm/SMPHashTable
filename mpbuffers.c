@@ -37,12 +37,6 @@ void inpb_flush(struct inputbuffer *buffer)
   buffer->local_index = 0;
 }
 
-void inpb_prefetch(struct inputbuffer *buffer)
-{
-  //__asm __volatile("prefetchw ");
-  __builtin_prefetch((const void *)buffer->data, 1, 3);
-}
-
 int inpb_read(struct inputbuffer *buffer, uint64_t *data)
 {
   int count = 0;

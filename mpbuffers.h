@@ -21,7 +21,6 @@ struct outputbuffer {
   unsigned long local_wr_index;
 } __attribute__ ((aligned (CACHELINE)));
 
-void inpb_prefetch(struct inputbuffer *buffer);
 int inpb_read(struct inputbuffer *buffer, uint64_t *data);
 void inpb_write(struct inputbuffer *buffer, int write_count, const uint64_t *data);
 void inpb_flush(struct inputbuffer *buffer);
