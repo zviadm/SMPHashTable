@@ -37,6 +37,11 @@ void inpb_flush(struct inputbuffer *buffer)
   buffer->local_index = 0;
 }
 
+void inpb_prefetch(struct inputbuffer *buffer)
+{
+  __builtin_prefetch((const void *)buffer->data, 1, 3);
+}
+
 int inpb_read(struct inputbuffer *buffer, uint64_t *data)
 {
   int count = 0;
@@ -56,6 +61,11 @@ void outb_write(struct outputbuffer *buffer, int write_count, const uint64_t *da
   }
   __sync_synchronize(); 
   buffer->wr_index += write_count;
+}
+
+void outb_prefetch(struct outputbuffer *buffer) {
+  __builtin_prefetch((const void *)&buffer->data[buffer->wr_index & (OUTB_SIZE - 1)], 1, 3);
+  //__builtin_prefetch((const void *)&buffer->data[(buffer->wr_index + INPB_SIZE) & (OUTB_SIZE - 1)], 1, 3);
 }
 
 int outb_read(struct outputbuffer *buffer, uint64_t *data)

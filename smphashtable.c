@@ -193,7 +193,9 @@ void *hash_table_server(void* args)
 
     int nclients = hash_table->nclients;
     for (int i = 0; i < nclients; i++) {
-      //inpb_prefetch(&boxes[(i + 1) % nclients].boxes[s].in);
+      inpb_prefetch(&boxes[i % nclients].boxes[s].in);
+    }
+    for (int i = 0; i < nclients; i++) {
       int count = inpb_read(&boxes[i].boxes[s].in, localbuf);
       if (count == 0) continue;
 
@@ -290,7 +292,7 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
   for(int i = 0; i < nqueries; i++) {
     int s = hash_get_server(hash_table, queries[i].key); 
 
-    while (pending_count[s] >= OUTB_SIZE) {
+    while (pending_count[s] >= (OUTB_SIZE - (CACHELINE >> 3))) {
       // we need to read values from server "s" buffer otherwise if we try to write
       // more queries to server "s" it will be blocked trying to write the return value 
       // to the buffer and it can easily cause deadlock between clients and servers
@@ -335,13 +337,7 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
   while (pindex < nqueries) {
     int ps = hash_get_server(hash_table, queries[pindex].key); 
     assert(pending_count[ps] > 0);
-    uint64_t val;
-    int r = outb_read(&boxes[client_id].boxes[ps].out, &val);
-    if (r == 0) {
-      inpb_flush(&boxes[client_id].boxes[ps].in);
-      val = outb_blocking_read(&boxes[client_id].boxes[ps].out);
-    }
-    values[pindex] = (void *)(unsigned long)val;
+    values[pindex] = (void *)(unsigned long)outb_blocking_read(&boxes[client_id].boxes[ps].out);
     pending_count[ps]--;
     pindex++;
   }
