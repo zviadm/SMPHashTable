@@ -55,7 +55,7 @@ int create_hash_table_client(struct hash_table *hash_table);
  * @return: pointer to hash_value structure holding value, or NULL if there
  * was no entry in hash table with given key
  */ 
-void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key);
+int smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key);
 
 /**
  * smp_hash_insert: Insert key/value pair in hash table
@@ -66,7 +66,10 @@ void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key ke
  * @return: pointer to newly allocated space of given size which client should
  * fill up with data
  */
-void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, int size);
+int smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, int size);
+
+int smp_try_get_next(struct hash_table *hash_table, int client_id, void **value);
+int smp_get_next(struct hash_table *hash_table, int client_id, void **value);
 
 /**
  * smp_hash_doall: Perform batch hash table queries

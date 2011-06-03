@@ -13,8 +13,6 @@
 #include "smphashtable.h"
 #include "util.h"
 
-#define SERVER_READ_COUNT BUFFER_FLUSH_COUNT 
-
 #define HASHOP_MASK       0xF000000000000000
 #define HASHOP_LOOKUP     0x1000000000000000 
 #define HASHOP_INSERT     0x2000000000000000 
@@ -22,6 +20,8 @@
 #define INSERT_MSG_LENGTH 2
 
 #define DATA_READY_MASK   0x8000000000000000
+
+#define MAX_PENDING_SIZE  (OUTB_SIZE * MAX_SERVERS)
 
 /**
  * Server/Client Message Passing Data Structures
@@ -42,6 +42,18 @@ struct thread_args {
 };
 
 /*
+ * Per Client Pending Data
+ */
+struct pending_data {
+  void * pending_values[MAX_PENDING_SIZE];
+  int pending_servers[MAX_PENDING_SIZE];
+  unsigned long rd_index;
+  unsigned long wr_index;
+  unsigned long pending_index;
+  int * pending_count;
+};
+
+/*
  * Hash Table data structure
  */
 struct hash_table {
@@ -57,6 +69,7 @@ struct hash_table {
   struct thread_args *thread_data;
 
   struct partition *partitions;
+  struct pending_data **pending_data;
   struct box_array *boxes;
 };
 
@@ -92,6 +105,7 @@ struct hash_table *create_hash_table(size_t max_size, int nservers)
     nservers * sizeof(struct thread_args);
   
   hash_table->partitions = memalign(CACHELINE, nservers * sizeof(struct partition));
+  hash_table->pending_data = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct pending_data *));
   hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
   for (int i = 0; i < hash_table->nservers; i++) {
     init_hash_partition(&hash_table->partitions[i], max_size / nservers, nservers);
@@ -110,8 +124,11 @@ void destroy_hash_table(struct hash_table *hash_table)
   free(hash_table->partitions);
 
   for (int i = 0; i < hash_table->nclients; i++) {
+    free(hash_table->pending_data[i]->pending_count);
+    free(hash_table->pending_data[i]);
     free(hash_table->boxes[i].boxes);
   }
+  free(hash_table->pending_data);
   free(hash_table->boxes);
 
   free(hash_table->threads);
@@ -168,13 +185,20 @@ int create_hash_table_client(struct hash_table *hash_table)
     assert((unsigned long) &hash_table->boxes[client].boxes[i].in % CACHELINE == 0);
     assert((unsigned long) &hash_table->boxes[client].boxes[i].out % CACHELINE == 0);
   }
+
+  hash_table->pending_data[client] = memalign(CACHELINE, sizeof(struct pending_data));
+  hash_table->pending_data[client]->rd_index = 0;  
+  hash_table->pending_data[client]->wr_index = 0;  
+  hash_table->pending_data[client]->pending_index = 0;  
+  hash_table->pending_data[client]->pending_count = (int*)memalign(CACHELINE, hash_table->nservers * sizeof(int));
+  memset(hash_table->pending_data[client]->pending_count, 0, hash_table->nservers * sizeof(int));
   
   __sync_add_and_fetch(&hash_table->nclients, 1);
   pthread_mutex_unlock(&hash_table->create_client_lock);
   return client;
 }
 
-void *hash_table_server(void* args)
+void * hash_table_server(void* args)
 {
   int s = ((struct thread_args *) args)->id;
   int c = ((struct thread_args *) args)->core;
@@ -192,6 +216,9 @@ void *hash_table_server(void* args)
     quitting = hash_table->quitting;
 
     int nclients = hash_table->nclients;
+    for (int i = 0; i < nclients; i++) {
+      inpb_prefetch(&boxes[i].boxes[s].in);
+    }
     for (int i = 0; i < nclients; i++) {
       int count = inpb_read(&boxes[i].boxes[s].in, localbuf);
       if (count == 0) continue;
@@ -260,30 +287,79 @@ void *hash_table_server(void* args)
   }
   printf("%2d %10lu %10lu\n", s, tmp0, tmp1);
   */
-  return 0;
+  return NULL;
 }
 
-void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key)
+void read_next_pending_value(struct hash_table *hash_table, int client_id)
 {
+  struct pending_data *pd = hash_table->pending_data[client_id];
+  int ps = pd->pending_servers[pd->wr_index & (MAX_PENDING_SIZE - 1)]; 
+  uint64_t val;
+  int r = outb_read(&hash_table->boxes[client_id].boxes[ps].out, &val);
+  if (r == 0) {
+    inpb_flush(&hash_table->boxes[client_id].boxes[ps].in);
+    val = outb_blocking_read(&hash_table->boxes[client_id].boxes[ps].out);
+  }
+  pd->pending_values[pd->wr_index & (MAX_PENDING_SIZE - 1)] = (void *)(unsigned long)val;
+  pd->pending_count[ps]--;
+  pd->wr_index++;
+}
+
+int smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key)
+{
+  struct pending_data *pd = hash_table->pending_data[client_id];
+  if (pd->pending_index - pd->rd_index >= MAX_PENDING_SIZE) return 0;
+
   uint64_t msg_data = key | HASHOP_LOOKUP;
-
   int s = hash_get_server(hash_table, key);
+  while (pd->pending_count[s] >= (OUTB_SIZE - (CACHELINE >> 3))) {
+    read_next_pending_value(hash_table, client_id);
+  }
   inpb_write(&hash_table->boxes[client_id].boxes[s].in, 1, &msg_data);
-  inpb_flush(&hash_table->boxes[client_id].boxes[s].in);
-
-  return (void *)(long)outb_blocking_read(&hash_table->boxes[client_id].boxes[s].out);
+  pd->pending_count[s]++;
+  pd->pending_servers[pd->pending_index & (MAX_PENDING_SIZE - 1)] = s;
+  pd->pending_index++;
+  return 1;
 }
 
-void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, int size)
+int smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, int size)
 {
+  struct pending_data *pd = hash_table->pending_data[client_id];
+  if (pd->pending_index - pd->rd_index >= MAX_PENDING_SIZE) return 0;
+
   uint64_t msg_data[INSERT_MSG_LENGTH];
   msg_data[0] = (unsigned long)key | HASHOP_INSERT;
   msg_data[1] = (unsigned long)size;
-
   int s = hash_get_server(hash_table, key);
+  while (pd->pending_count[s] >= (OUTB_SIZE - (CACHELINE >> 3))) {
+    read_next_pending_value(hash_table, client_id);
+  }
   inpb_write(&hash_table->boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data);
-  inpb_flush(&hash_table->boxes[client_id].boxes[s].in);
-  return (void *)(long)outb_blocking_read(&hash_table->boxes[client_id].boxes[s].out);
+  pd->pending_count[s]++;
+  pd->pending_servers[pd->pending_index & (MAX_PENDING_SIZE - 1)] = s;
+  pd->pending_index++;
+  return 1;
+}
+
+int smp_try_get_next(struct hash_table *hash_table, int client_id, void **value)
+{
+  struct pending_data *pd = hash_table->pending_data[client_id];
+  if (pd->rd_index == pd->wr_index) return 0;
+  *value = pd->pending_values[pd->rd_index & (MAX_PENDING_SIZE - 1)];
+  pd->rd_index++;
+  return 1;
+}
+
+int smp_get_next(struct hash_table *hash_table, int client_id, void **value)
+{
+  struct pending_data *pd = hash_table->pending_data[client_id];
+  if (pd->rd_index == pd->pending_index) return 0;
+  if (pd->rd_index == pd->wr_index) {
+    read_next_pending_value(hash_table, client_id);
+  }
+  *value = pd->pending_values[pd->rd_index & (MAX_PENDING_SIZE - 1)];
+  pd->rd_index++;
+  return 1;
 }
 
 void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, void **values)

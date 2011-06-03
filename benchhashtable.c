@@ -244,26 +244,46 @@ void handle_query_result(struct hash_query *query, void *value)
 
 void * client_design1(void *args)
 {
+  int r;
   int c = *(int *)args;
   set_affinity(c);
   
   int cid = create_hash_table_client(hash_table);
 
-  struct hash_query query;
+  struct hash_query *queries = (struct hash_query *)memalign(CACHELINE, batch_size * sizeof(struct hash_query));
   void *value;
+  int k = 0;
+  int j = 0;
   for (int i = 0; i < iters_per_client; i++) {
     // generate random query
-    get_random_query(c, &query);
-    if (query.optype == OPTYPE_LOOKUP) {
-      value = smp_hash_lookup(hash_table, cid, query.key);
+    get_random_query(c, &queries[k]);
+    if (queries[k].optype == OPTYPE_LOOKUP) {
+      r = smp_hash_lookup(hash_table, cid, queries[k].key);
     } else {
-      value = smp_hash_insert(hash_table, cid, query.key, query.size);
+      r = smp_hash_insert(hash_table, cid, queries[k].key, queries[k].size);
     }
+    assert(r == 1);
+    k = (k + 1) % batch_size;
 
-    handle_query_result(&query, value);
+    if (j == 1) {
+      r = smp_get_next(hash_table, cid, &value);
+      assert(r == 1);
+    
+      handle_query_result(&queries[j], value);   
+      if (value != NULL) {
+        mp_release_value(hash_table, cid, value);
+      }
+    } else if (k == batch_size - 1) {
+      j = 1;
+    }
+  }
+
+  while ((r = smp_get_next(hash_table, cid, &value)) == 1) {
+    handle_query_result(&queries[k], value);
     if (value != NULL) {
       mp_release_value(hash_table, cid, value);
     }
+    k = (k + 1) % batch_size;
   }
   return NULL;
 }

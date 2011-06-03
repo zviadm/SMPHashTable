@@ -10,7 +10,10 @@ static inline void insert(struct hash_table *table, int use_locking, int c, hash
 {
   void * value;
   if (use_locking == 0) {
-    value = smp_hash_insert(table, c, key, 8);
+    int r = smp_hash_insert(table, c, key, 8);
+    assert(r == 1);
+    r = smp_get_next(table, c, &value);
+    assert(r == 1);
   } else {
     value = locking_hash_insert(table, key, 8);
   }
@@ -27,7 +30,10 @@ static inline long lookup(struct hash_table *table, int use_locking, int c, hash
 {
   void * value;
   if (use_locking == 0) {
-    value = smp_hash_lookup(table, c, key);
+    int r = smp_hash_lookup(table, c, key);
+    assert(r == 1);
+    r = smp_get_next(table, c, &value);
+    assert(r == 1);
   } else {
     value = locking_hash_lookup(table, key);
   }
