@@ -52,14 +52,14 @@ sure that the hash table was full for most of the iterations. Figure \ref{fig:sc
 
 \begin{figure}[!ht]
   \centering
-  \includegraphics[width=0.8\linewidth]{figs/scale10mb.png}
+  \includegraphics[width=\linewidth]{figs/scale10mb.png}
   \caption{Throughput per core on 10 MB hash table}
   \label{fig:scale10mb}
 \end{figure}
     
 \begin{figure}[!ht]
   \centering
-  \includegraphics[width=0.8\linewidth]{figs/scale1gb.png}
+  \includegraphics[width=\linewidth]{figs/scale1gb.png}
   \caption{Throughput per core on 1 GB hash table}
   \label{fig:scale1gb}
 \end{figure}
@@ -76,7 +76,7 @@ In this scenario message passing takes most of the computation time. Figure \ref
 
 \begin{figure}[!ht]
   \centering
-  \includegraphics[width=0.8\linewidth]{figs/scalemp.png}
+  \includegraphics[width=\linewidth]{figs/scalemp.png}
   \caption{Message Passing Throughput per core}
   \label{fig:scalemp}
 \end{figure}
@@ -88,7 +88,7 @@ the previous section, as well as for a 40 MB hash table.
 
 \begin{figure}[!ht]
   \centering
-  \includegraphics[width=0.8\linewidth]{figs/cphashspeedup.png}
+  \includegraphics[width=\linewidth]{figs/cphashspeedup.png}
   \caption{\cphash{} throughput vs \lockhash{} throughput}
   \label{fig:cphashspeedup}
 \end{figure}
@@ -145,7 +145,7 @@ is 100\%. On the other hand when running with a key range of 0..2$^{28}$ it is a
 
 \begin{figure}[!ht]
   \centering
-  \includegraphics[width=0.8\linewidth]{figs/cpserverspeedup.png}
+  \includegraphics[width=\linewidth]{figs/cpserverspeedup.png}
   \caption{\cpserver{} throughput vs \lockserver{} throughput}
   \label{fig:cpserverspeedup}
 \end{figure}
@@ -181,10 +181,8 @@ ranges of 72 to 192 bytes to \memcached{} with value ranges of 8 to 128 bytes. T
 The tables give total running times for \cpserver{} and \memcached{} (in seconds) and also provide the average hit rate per each LOOKUP operation.
 Figure \ref{fig:cpserverspeedup2} shows the throughput gains of \cpserver{} compared to \memcached{} based on values provided in the tables. 
 
-\begin{table}[!ht]
+\begin{table*}[!ht]
 \centering
-\caption{Speedup with hash value size range of 8 to 128 bytes} 
-\label{table:memcachedspeedup0}
 \begin{tabular}{ | c | c | c | c | c | }
   \hline
   Key Range & \cpserver{} & \memcached{} & Speedup & Hit rates \\
@@ -194,12 +192,12 @@ Figure \ref{fig:cpserverspeedup2} shows the throughput gains of \cpserver{} comp
   0..2$^{16}$ & 16.719 & 39.512 & 2.363 & 1.0 vs 1.0     \\
   \hline
 \end{tabular}
-\end{table}
+\caption{Speedup with hash value size range of 8 to 128 bytes} 
+\label{table:memcachedspeedup0}
+\end{table*}
 
-\begin{table}[!ht]
+\begin{table*}[!ht]
 \centering
-\caption{Speedup with hash value size range of 8 to 512 bytes} 
-\label{table:memcachedspeedup1}
 \begin{tabular}{ | c | c | c | c | c | }
   \hline
   Key Range & \cpserver{} & \memcached{} & Speedup & Hit rates \\
@@ -209,12 +207,12 @@ Figure \ref{fig:cpserverspeedup2} shows the throughput gains of \cpserver{} comp
   0..2$^{16}$ & 39.845 & 46.388 & 1.164 & 1.0 vs 1.0     \\
   \hline
 \end{tabular}
-\end{table}
+\caption{Speedup with hash value size range of 8 to 512 bytes} 
+\label{table:memcachedspeedup1}
+\end{table*}
 
-\begin{table}[!ht]
+\begin{table*}[!ht]
 \centering
-\caption{Speedup with larger hash value size range for \cpserver{}} 
-\label{table:memcachedspeedup2}
 \begin{tabular}{ | c | c | c | c | c | }
   \hline
   Key Range & \cpserver{} & \memcached{} & Speedup & Hit rates \\
@@ -223,11 +221,13 @@ Figure \ref{fig:cpserverspeedup2} shows the throughput gains of \cpserver{} comp
   0..2$^{16}$ & 19.329 & 39.512 & 2.044 & 1.0 vs 1.0   \\
   \hline
 \end{tabular}
-\end{table}
+\caption{Speedup with larger hash value size range for \cpserver{}} 
+\label{table:memcachedspeedup2}
+\end{table*}
 
 \begin{figure}[!ht]
   \centering
-  \includegraphics[width=0.8\linewidth]{figs/cpserverspeedup2.png}
+  \includegraphics[width=\linewidth]{figs/cpserverspeedup2.png}
   \caption{\cpserver{} throughput vs \memcached{} throughput}
   \label{fig:cpserverspeedup2}
 \end{figure}
