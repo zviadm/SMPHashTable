@@ -41,7 +41,7 @@ struct client_data {
   volatile int sockets[MAX_SOCKETS];
   volatile FILE *fin[MAX_SOCKETS];
   int writeiov_cnt[MAX_SOCKETS];
-  struct iovec *writeiov[MAX_SOCKETS]; // TODO: dynamically allocate this dude
+  struct iovec *writeiov[MAX_SOCKETS]; 
 };
 
 struct client_data cdata[MAX_CLIENTS];
@@ -297,7 +297,25 @@ int read_object(char *buf, size_t size, FILE *f)
   return 0;
 }
 
-int write_iovs(int sock, struct iovec *iov, int iovcnt) 
+void release_value(int client_id, void *ptr)
+{
+  if (design == 1 || design == 2) {
+    mp_release_value(hash_table, client_id, ptr);
+  } else {
+    atomic_release_value(ptr);
+  }
+}
+
+void mark_ready(int client_id, void *ptr)
+{
+  if (design == 1 || design == 2) {
+    mp_mark_ready(hash_table, client_id, ptr);
+  } else {
+    atomic_mark_ready(ptr);
+  }
+}
+
+int write_iovs(int client_id, int sock, struct iovec *iov, int iovcnt) 
 {
   int ret = 0;
   ssize_t r;
@@ -319,7 +337,7 @@ int write_iovs(int sock, struct iovec *iov, int iovcnt)
         ciov++;
         if (ciov == iovcnt) break;
 
-        if (ciov_base != &NULL_VALUE) value_release(ciov_base);
+        if (ciov_base != &NULL_VALUE) release_value(client_id, ciov_base);
         ciov_base = iov[ciov].iov_base;
       } else {
         iov[ciov].iov_len -= r;
@@ -329,9 +347,9 @@ int write_iovs(int sock, struct iovec *iov, int iovcnt)
     }
   }
 
-  if (ciov_base != &NULL_VALUE) value_release(ciov_base);
+  if (ciov_base != &NULL_VALUE) release_value(client_id, ciov_base);
   for (int i = ciov + 1; i < iovcnt; i++) {
-    if (iov[i].iov_base != &NULL_VALUE) value_release(iov[i].iov_base);
+    if (iov[i].iov_base != &NULL_VALUE) release_value(client_id, iov[i].iov_base);
   }
 
   return ret;
@@ -512,7 +530,7 @@ void * clientgo(void *xarg)
           if (val != NULL) {
             val->size = queries[k].size - sizeof(uint32_t);
             memcpy(val->data, valueoffset[k], val->size);
-            value_mark_ready(val);
+            mark_ready(cid, val);
           } else {
             assert(0);
           }
@@ -526,7 +544,7 @@ void * clientgo(void *xarg)
     // Write all prepared iovs to appropriate sockets
     for (int k = 0; k < MAX_SOCKETS; k++) {
       if (cd->writeiov_cnt[k] > 0) {
-        r = write_iovs(cd->sockets[k], cd->writeiov[k], cd->writeiov_cnt[k]);
+        r = write_iovs(cid ,cd->sockets[k], cd->writeiov[k], cd->writeiov_cnt[k]);
         cd->writeiov_cnt[k] = 0;
 
         if (verbose > 0 && r == 2) {
@@ -547,14 +565,20 @@ void * clientgo(void *xarg)
 
 void doqueries(int cid, int nqueries, struct hash_query *queries, void **values)
 {
+  int r;
   switch (design) {
     case 1:
       for (int k = 0; k < nqueries; k++) {
         if (queries[k].optype == OPTYPE_LOOKUP) {
-          values[k] = smp_hash_lookup(hash_table, cid, queries[k].key);
+          r = smp_hash_lookup(hash_table, cid, queries[k].key);
         } else {
-          values[k] = smp_hash_insert(hash_table, cid, queries[k].key, queries[k].size);
+          r = smp_hash_insert(hash_table, cid, queries[k].key, queries[k].size);
         }
+        assert(r == 1);
+      }
+      for (int k = 0; k < nqueries; k++) {
+        r = smp_get_next(hash_table, cid, &values[k]);
+        assert(r == 1);
       }
       break;
     case 2:

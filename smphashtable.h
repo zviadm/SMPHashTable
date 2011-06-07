@@ -84,6 +84,9 @@ int smp_get_next(struct hash_table *hash_table, int client_id, void **value);
  * @nqueries: number of queries
  * @queries: hash table quries
  * @values: array to return results of queries
+ *
+ * NOTE: this has become basically obsolete, it can be substituted by using 
+ * smp_hash_lookup and smp_hash_insert plus get_next or try_get_nexts
  */
 void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, void **values);
 
