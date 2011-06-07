@@ -21,7 +21,8 @@
 
 #define DATA_READY_MASK   0x8000000000000000
 
-#define MAX_PENDING_SIZE  (OUTB_SIZE * MAX_SERVERS)
+#define MAX_PENDING_SIZE        (OUTB_SIZE * MAX_SERVERS)
+#define MAX_PENDING_PER_SERVER  (OUTB_SIZE - (CACHELINE >> 3))
 
 /**
  * Server/Client Message Passing Data Structures
@@ -216,9 +217,9 @@ void * hash_table_server(void* args)
     quitting = hash_table->quitting;
 
     int nclients = hash_table->nclients;
-    for (int i = 0; i < nclients; i++) {
-      inpb_prefetch(&boxes[i].boxes[s].in);
-    }
+    //for (int i = 0; i < nclients; i++) {
+    //  inpb_prefetch(&boxes[i].boxes[s].in);
+    //}
     for (int i = 0; i < nclients; i++) {
       int count = inpb_read(&boxes[i].boxes[s].in, localbuf);
       if (count == 0) continue;
@@ -228,7 +229,6 @@ void * hash_table_server(void* args)
       struct elem *e;
       unsigned long value;
       while (k < count) {
-        //printf("%d - %i - %d - %lx\n", s, i, k, localbuf[k]);
         value = 0;
 
         switch (localbuf[k] & HASHOP_MASK) {
@@ -312,7 +312,7 @@ int smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key)
 
   uint64_t msg_data = key | HASHOP_LOOKUP;
   int s = hash_get_server(hash_table, key);
-  while (pd->pending_count[s] >= (OUTB_SIZE - (CACHELINE >> 3))) {
+  while (pd->pending_count[s] >= MAX_PENDING_PER_SERVER) {
     read_next_pending_value(hash_table, client_id);
   }
   inpb_write(&hash_table->boxes[client_id].boxes[s].in, 1, &msg_data);
@@ -331,7 +331,7 @@ int smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, 
   msg_data[0] = (unsigned long)key | HASHOP_INSERT;
   msg_data[1] = (unsigned long)size;
   int s = hash_get_server(hash_table, key);
-  while (pd->pending_count[s] >= (OUTB_SIZE - (CACHELINE >> 3))) {
+  while (pd->pending_count[s] >= MAX_PENDING_PER_SERVER) {
     read_next_pending_value(hash_table, client_id);
   }
   inpb_write(&hash_table->boxes[client_id].boxes[s].in, INSERT_MSG_LENGTH, msg_data);
@@ -375,7 +375,7 @@ void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, 
   for(int i = 0; i < nqueries; i++) {
     int s = hash_get_server(hash_table, queries[i].key); 
 
-    while (pending_count[s] >= (OUTB_SIZE - (CACHELINE >> 3))) {
+    while (pending_count[s] >= MAX_PENDING_PER_SERVER) {
       // we need to read values from server "s" buffer otherwise if we try to write
       // more queries to server "s" it will be blocked trying to write the return value 
       // to the buffer and it can easily cause deadlock between clients and servers
@@ -476,7 +476,7 @@ void mp_release_value_(struct elem *e)
   }
 }
 
-void mp_release_value(struct hash_table *hash_table, int client_id, void *ptr)
+void mp_send_release_msg_(struct hash_table *hash_table, int client_id, void *ptr, int force_flush)
 {
   struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
   uint64_t msg_data = (uint64_t)e | HASHOP_RELEASE;
@@ -484,13 +484,19 @@ void mp_release_value(struct hash_table *hash_table, int client_id, void *ptr)
 
   int s = hash_get_server(hash_table, e->key);
   inpb_write(&hash_table->boxes[client_id].boxes[s].in, 1, &msg_data);
+  if (force_flush) {
+    inpb_flush(&hash_table->boxes[client_id].boxes[s].in);
+  }
 }
 
-void mp_flush_releases(struct hash_table *hash_table, int client_id)
+void mp_release_value(struct hash_table *hash_table, int client_id, void *ptr)
 {
-  for (int i = 0; i < hash_table->nservers; i++) {
-    inpb_flush(&hash_table->boxes[client_id].boxes[i].in);
-  }
+  mp_send_release_msg_(hash_table, client_id, ptr, 0);
+}
+
+void mp_mark_ready(struct hash_table *hash_table, int client_id, void *ptr)
+{
+  mp_send_release_msg_(hash_table, client_id, ptr, 1);
 }
 
 void atomic_release_value_(struct elem *e)

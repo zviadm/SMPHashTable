@@ -254,7 +254,7 @@ void get_random_query(int client_id, struct hash_query *query)
   }
 }
 
-void handle_query_result(struct hash_query *query, void *value)
+void handle_query_result(int client_id, struct hash_query *query, void *value)
 {
   long *val = value;
   if (query->optype == OPTYPE_LOOKUP) {
@@ -262,10 +262,22 @@ void handle_query_result(struct hash_query *query, void *value)
       if (val[0] != query->key) {
         printf("ERROR: values do not match: %ld, should be %ld\n", val[0], query->key);
       }
+
+      if (design == 1 || design == 2) {
+        mp_release_value(hash_table, client_id, value);
+      } else {
+        atomic_release_value(value);
+      }
     }
   } else {
     assert(val != NULL);
     val[0] = query->key;
+
+    if (design == 1 || design == 2) {
+      mp_mark_ready(hash_table, client_id, value);
+    } else {
+      atomic_mark_ready(value);
+    }
   }
 }
 
@@ -296,10 +308,7 @@ void * client_design1(void *args)
       r = smp_get_next(hash_table, cid, &value);
       assert(r == 1);
     
-      handle_query_result(&queries[k], value);   
-      if (value != NULL) {
-        mp_release_value(hash_table, cid, value);
-      }
+      handle_query_result(cid, &queries[k], value);   
     } else if (k == batch_size - 1) {
       j = 1;
     }
@@ -307,10 +316,7 @@ void * client_design1(void *args)
 
   while ((r = smp_get_next(hash_table, cid, &value)) == 1) {
     k = (k + 1) % batch_size;
-    handle_query_result(&queries[k], value);
-    if (value != NULL) {
-      mp_release_value(hash_table, cid, value);
-    }
+    handle_query_result(cid, &queries[k], value);
   }
   return NULL;
 }
@@ -334,10 +340,7 @@ void * client_design2(void *args)
     smp_hash_doall(hash_table, cid, nqueries, queries, values);
 
     for (int k = 0; k < nqueries; k++) {
-      handle_query_result(&queries[k], values[k]);
-      if (values[k] != NULL) {
-        mp_release_value(hash_table, cid, values[k]);
-      }
+      handle_query_result(cid, &queries[k], values[k]);
     }
     i += nqueries;
   }
@@ -363,14 +366,7 @@ void * client_design3(void *args)
       value = locking_hash_insert(hash_table, query.key, query.size);
     }
 
-    handle_query_result(&query, value);
-    if (value != NULL) {
-      if (query.optype == OPTYPE_LOOKUP) {
-        atomic_release_value(value);
-      } else {
-        atomic_mark_ready(value);
-      }
-    }
+    handle_query_result(c, &query, value);
   }
   return NULL;
 }

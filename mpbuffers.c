@@ -65,7 +65,7 @@ void outb_write(struct outputbuffer *buffer, int write_count, const uint64_t *da
 }
 
 void outb_prefetch(struct outputbuffer *buffer) {
-  __builtin_prefetch((const void *)&buffer->data[buffer->wr_index & (OUTB_SIZE - 1)], 1, 3);
+  //__builtin_prefetch((const void *)&buffer->data[buffer->wr_index & (OUTB_SIZE - 1)], 1, 3);
   //__builtin_prefetch((const void *)&buffer->data[(buffer->wr_index + INPB_SIZE) & (OUTB_SIZE - 1)], 1, 3);
 }
 

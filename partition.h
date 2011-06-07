@@ -12,7 +12,7 @@
  * struct partition  - hash table partition for server
  */
 struct elem {
-  // size must be 48
+  // size must be 48 bytes
   hash_key key;
   uint64_t ref_count;
   TAILQ_ENTRY(elem) chain;
@@ -42,9 +42,6 @@ struct partition {
   struct alock lock;   // partition lock for locking implementation
 } __attribute__ ((aligned (CACHELINE)));
 
-/**
- * Value Release Function Type
- */
 typedef void release_value_f(struct elem *e);
 
 void init_hash_partition(struct partition *p, size_t max_size, int nservers);

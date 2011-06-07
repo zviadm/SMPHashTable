@@ -20,7 +20,7 @@ static inline void insert(struct hash_table *table, int use_locking, int c, hash
   assert(value != NULL);
   *(long *)value = val;
   if (use_locking == 0) {
-    mp_release_value(table, c, value);
+    mp_mark_ready(table, c, value);
   } else {
     atomic_mark_ready(value);
   }
@@ -165,7 +165,7 @@ void test3(int use_locking)
   insert(table, use_locking, c1, 123, 0xDEADBEEF);
   insert(table, use_locking, c1, 1234, 0xFACEDEAD);
   if (use_locking == 0) {
-    mp_flush_releases(table, c1);
+    // need to wait to make sure mark ready is flushed
     usleep(1000000);
   }
 
@@ -180,7 +180,7 @@ void test3(int use_locking)
   printf("Rewriting Element using Client 2...\n");
   insert(table, use_locking, c2, 123, 0xACEACEACE);
   if (use_locking == 0) {
-    mp_flush_releases(table, c2);
+    // need to wait to make sure mark ready is flushed
     usleep(1000000);
   }
 
@@ -229,7 +229,7 @@ void test4()
   for (int i = 0; i < nqueries; i++) {
     assert(values[i] != NULL);
     *(long *)values[i] = i;
-    mp_release_value(table, c, values[i]);
+    mp_mark_ready(table, c, values[i]);
   }
 
   smp_hash_doall(table, c, nqueries, &queries[nqueries], values);

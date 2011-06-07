@@ -12,7 +12,7 @@
 #include "partition.h"
 #include "util.h"
 
-#define BUCKET_LOAD       (2 * 128) // Min Element Size is 128 bytes
+#define BUCKET_LOAD (2 * 128) // Min Element Size is 128 bytes, so bucket on average will hold 2 elements
 
 void init_hash_partition(struct partition *p, size_t max_size, int nservers)
 {
