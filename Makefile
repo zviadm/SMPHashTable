@@ -23,7 +23,7 @@ hashserver2 testhashtable benchhashtable: %: %.o $(LIBOBJS)
 benchhashtable: LFLAGS += -lprofiler
 
 benchhashserver: %: %.o util.o hashclient.o
-	gcc -o $@ $^ /usr/local/lib/libmemcached.a $(LFLAGS)
+	gcc -o $@ $^ -lmemcached $(LFLAGS)
 
 %.P : %.c
 				$(MAKEDEPEND)
