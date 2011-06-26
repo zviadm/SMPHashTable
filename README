@@ -1,6 +1,6 @@
 How to Build:
 
-Code can be built by just typing make. Makefile pretty simple and self explanatory.
+Code can be built by just typing make. Makefile is pretty simple and self explanatory.
 
 To build hash server benchmarks you will need libmemcached
 installed with static libraries enabled (run ./configure --enable-static). 
