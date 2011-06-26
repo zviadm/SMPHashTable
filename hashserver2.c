@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
         break;
       default:
         printf("hash server options are: \n"
-               "   -d design (1 = naive server/client, 2 = buffering server/client, 3 = locking)\n"
+               "   -d design (1 = server/client, 2 = old-style server/client, 3 = locking)\n"
                "   -s number of servers / partitions\n"
                "   -p port\n"
                "   -c maximum number of clients\n"

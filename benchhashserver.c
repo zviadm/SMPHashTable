@@ -113,7 +113,7 @@ int main(int argc, char *argv[])
                "   -w hash insert ratio over total number of queries\n"
                "   -b batch size \n"
                "   -f start_core/end_core -- fix to cores [start_core .. end_core]\n"
-               "   -d design -- 1 - key/value store, 2 - memcached\n"
+               "   -d design -- 1 - key/value cache server, 2 - memcached\n"
                );
         exit(-1);
     }

@@ -13,6 +13,9 @@
 #include "smphashtable.h"
 #include "util.h"
 
+/** 
+ * Hash Table Operations
+ */
 #define HASHOP_MASK       0xF000000000000000
 #define HASHOP_LOOKUP     0x1000000000000000 
 #define HASHOP_INSERT     0x2000000000000000 
@@ -21,7 +24,9 @@
 
 #define DATA_READY_MASK   0x8000000000000000
 
+// Maximum pending Requests for a client
 #define MAX_PENDING_SIZE        (OUTB_SIZE * MAX_SERVERS)
+// Maximum pending requests for a client for a single server
 #define MAX_PENDING_PER_SERVER  (OUTB_SIZE - (CACHELINE >> 3))
 
 /**
@@ -76,13 +81,9 @@ struct hash_table {
 
 // Forward declarations
 void *hash_table_server(void* args);
-
 int is_value_ready(struct elem *e);
 void mp_release_value_(struct elem *e);
-void mp_release_value(struct hash_table *hash_table, int client_id, void *ptr);
 void atomic_release_value_(struct elem *e);
-void atomic_release_value(void *ptr);
-void atomic_mark_ready(void *ptr);
 
 /**
  * hash_get_server: returns server that should handle given key
@@ -217,9 +218,11 @@ void * hash_table_server(void* args)
     quitting = hash_table->quitting;
 
     int nclients = hash_table->nclients;
-    //for (int i = 0; i < nclients; i++) {
-    //  inpb_prefetch(&boxes[i].boxes[s].in);
-    //}
+#if 0
+    for (int i = 0; i < nclients; i++) {
+      inpb_prefetch(&boxes[i].boxes[s].in);
+    }
+#endif
     for (int i = 0; i < nclients; i++) {
       int count = inpb_read(&boxes[i].boxes[s].in, localbuf);
       if (count == 0) continue;
@@ -278,7 +281,7 @@ void * hash_table_server(void* args)
     }
   }
 
-  /*
+#if 0
   unsigned long tmp0 = 0;
   unsigned long tmp1 = 0;
   for (int i = 0; i < hash_table->nclients; i++) {
@@ -286,7 +289,7 @@ void * hash_table_server(void* args)
     tmp1 += boxes[i].boxes[s].out.local_waitcnt;
   }
   printf("%2d %10lu %10lu\n", s, tmp0, tmp1);
-  */
+#endif
   return NULL;
 }
 
@@ -362,6 +365,10 @@ int smp_get_next(struct hash_table *hash_table, int client_id, void **value)
   return 1;
 }
 
+/**
+ * XXX: This method is useless now since it can be effectively replaced 
+ * by other more flexible methods. And their performance is essentially the same if not better
+ */
 void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, void **values)
 {
   int pindex = 0;
@@ -491,12 +498,12 @@ void mp_send_release_msg_(struct hash_table *hash_table, int client_id, void *pt
 
 void mp_release_value(struct hash_table *hash_table, int client_id, void *ptr)
 {
-  mp_send_release_msg_(hash_table, client_id, ptr, 0);
+  mp_send_release_msg_(hash_table, client_id, ptr, 0 /* force_flush */);
 }
 
 void mp_mark_ready(struct hash_table *hash_table, int client_id, void *ptr)
 {
-  mp_send_release_msg_(hash_table, client_id, ptr, 1);
+  mp_send_release_msg_(hash_table, client_id, ptr, 1 /* force_flush */);
 }
 
 void atomic_release_value_(struct elem *e)

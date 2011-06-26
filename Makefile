@@ -19,12 +19,12 @@ BINS = testhashtable benchhashtable hashserver2 benchhashserver
 all: $(BINS)
 
 hashserver2 testhashtable benchhashtable: %: %.o $(LIBOBJS)
-	gcc -o $@ $^ $(LFLAGS)
+	g++ -o $@ $^ $(LFLAGS)
 
 #benchhashtable: LFLAGS += -lprofiler
 
 benchhashserver: %: %.o util.o hashclient.o
-	gcc -o $@ $^ /usr/local/lib/libmemcached.a $(LFLAGS)
+	g++ -o $@ $^ /usr/local/lib/libmemcached.a $(LFLAGS) #-lmemcached $(LFLAGS) 
 
 %.P : %.c
 				-$(MAKEDEPEND)

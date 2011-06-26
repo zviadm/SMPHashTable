@@ -99,7 +99,7 @@ int main(int argc, char *argv[])
         break;
       default:
         printf("benchmark options are: \n"
-               "   -d design (1 = naive server/client, 2 = buffering server/client, 3 = locking)\n"
+               "   -d design (1 = server/client, 2 = old-style server/client, 3 = locking)\n"
                "   -s number of servers / partitions\n"
                "   -c number of clients\n"
                "   -b batch size (for design 2)\n"
