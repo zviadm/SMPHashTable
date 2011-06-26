@@ -215,8 +215,8 @@ void run_benchmark()
   // print out all the important information
   printf("Benchmark Done. Design %d - Total time: %.3f, Iterations: %d\n", 
       design, tend - tstart, niters);
-  printf("nservers: %d, nclients: %d, partition overhead: %zu(bytes), nhits / nlookups: %.3f\n", 
-      nservers, nclients, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / stats_get_nlookups(hash_table));
+  printf("nservers: %d, nclients: %d, nhits / nlookups: %.3f\n", 
+      nservers, nclients, (double)stats_get_nhits(hash_table) / stats_get_nlookups(hash_table));
   if (NEVT > 0) {
     printf("L2 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
         clients_totalpmc[0] / niters, servers_totalpmc[0] / niters, (clients_totalpmc[0] + servers_totalpmc[0]) / niters);

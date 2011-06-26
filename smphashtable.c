@@ -66,7 +66,6 @@ struct hash_table {
   int nservers;
   volatile int nclients;
   size_t max_size;
-  size_t overhead;
 
   pthread_mutex_t create_client_lock;
 
@@ -101,11 +100,6 @@ struct hash_table *create_hash_table(size_t max_size, int nservers)
   hash_table->max_size = max_size;
   pthread_mutex_init(&hash_table->create_client_lock, NULL);
 
-  hash_table->overhead = 
-    sizeof(struct hash_table) + nservers * sizeof(struct partition) + 
-    MAX_CLIENTS * sizeof(struct box_array) + nservers * sizeof(pthread_t) +
-    nservers * sizeof(struct thread_args);
-  
   hash_table->partitions = memalign(CACHELINE, nservers * sizeof(struct partition));
   hash_table->pending_data = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct pending_data *));
   hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
@@ -179,7 +173,6 @@ int create_hash_table_client(struct hash_table *hash_table)
   int client = hash_table->nclients;
   assert(hash_table->nclients <= MAX_CLIENTS);
   
-  hash_table->overhead += hash_table->nservers * sizeof(struct box);
   hash_table->boxes[client].boxes = memalign(CACHELINE, hash_table->nservers * sizeof(struct box));
   assert((unsigned long) &hash_table->boxes[client] % CACHELINE == 0);
   for (int i = 0; i < hash_table->nservers; i++) {
@@ -571,11 +564,6 @@ int stats_get_ninserts(struct hash_table *hash_table)
   return ninserts;
 }
 
-size_t stats_get_overhead(struct hash_table *hash_table)
-{
-  return hash_table->overhead;
-}
-
 void stats_get_buckets(struct hash_table *hash_table, int server, double *avg, double *stddev)
 {
   struct partition *p = &hash_table->partitions[server];
@@ -605,7 +593,7 @@ void stats_get_buckets(struct hash_table *hash_table, int server, double *avg, d
   *stddev = sqrt(*stddev / (nelems - 1));
 }
 
-void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total, double *util)
+void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total)
 {
   struct partition *p;
   size_t m = 0, u = 0;
@@ -619,5 +607,4 @@ void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total, d
 
   *total = m;
   *used = u;
-  *util = 0.0;
 }
