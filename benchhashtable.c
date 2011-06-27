@@ -6,7 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <google/profiler.h>
+//#include <google/profiler.h>
 
 #include "ia32perf.h"
 #include "smphashtable.h"
@@ -15,10 +15,18 @@
 #ifndef AMD64
   // Event Select values for Intel I7 core processor
   // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits)
-  #define L2MISS_EVENT_SELECT 0x00410224
+  #define NEVT 1
+  uint64_t evts[NEVT] = {
+    0x00410224, // L2 Misses
+  };
 #else
+  // Reserved (22 bits) - HO - GO - Reserved (4 bits) - Event Select (8 bits)
   // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits)
-  #define L2MISS_EVENT_SELECT 0x0041077E
+  #define NEVT 2
+  uint64_t evts[NEVT] = {
+    0x000041077E, // L2 Misses
+    0x04004107E1, // L3 Misses, needs to be ORed with (core# << (12))
+  };
 #endif
 
 int design          = 1;
@@ -37,8 +45,8 @@ struct hash_table *hash_table;
 long rand_data[10000] = { 0 };
 int iters_per_client; 
 
-uint64_t pmccount[100];
-uint64_t pmclast[100];
+uint64_t pmccount[NEVT][MAX_SERVERS + MAX_CLIENTS];
+uint64_t pmclast[NEVT][MAX_SERVERS + MAX_CLIENTS];
 
 struct client_data {
   unsigned int seed;
@@ -91,7 +99,7 @@ int main(int argc, char *argv[])
         break;
       default:
         printf("benchmark options are: \n"
-               "   -d design (1 = naive server/client, 2 = buffering server/client, 3 = locking)\n"
+               "   -d design (1 = server/client, 2 = old-style server/client, 3 = locking)\n"
                "   -s number of servers / partitions\n"
                "   -c number of clients\n"
                "   -b batch size (for design 2)\n"
@@ -131,19 +139,28 @@ void run_benchmark()
   double tstart = now();
 
   for (int i = 0; i < nclients; i++) {
-    if (StartCounter(i, 0, L2MISS_EVENT_SELECT) != 0) {
-      printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
-             " and are running benchmark with sudo privileges\n", i);
-    }
-    ReadCounter(i, 0, &pmclast[i]);
-  }
-  if (design == 1 || design == 2) {
-    for (int i = first_core; i < first_core + nservers; i++) {
-      if (StartCounter(i, 0, L2MISS_EVENT_SELECT) != 0) {
+    for (int k = 0; k < NEVT; k++) {
+      if (StartCounter(i, k, 
+            (k == 1) ? (evts[k] | ((i % 6) << 12)) : 
+            evts[k]) != 0) {
         printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
             " and are running benchmark with sudo privileges\n", i);
       }
-      ReadCounter(i, 0, &pmclast[i]);
+      ReadCounter(i, k, &pmclast[k][i]);
+    }
+  }
+
+  if (design == 1 || design == 2) {
+    for (int i = first_core; i < first_core + nservers; i++) {
+      for (int k = 0; k < NEVT; k++) {
+        if (StartCounter(i, k, 
+              (k == 1) ? (evts[k] | ((i % 6) << 12)) : 
+              evts[k]) != 0) {
+          printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
+              " and are running benchmark with sudo privileges\n", i);
+        }
+        ReadCounter(i, k, &pmclast[k][i]);
+      }
     }
   }
 
@@ -173,18 +190,22 @@ void run_benchmark()
     stop_hash_table_servers(hash_table);
   }
 
-  double clients_totalpmc = 0;
-  double servers_totalpmc = 0;
+  double clients_totalpmc[NEVT] = { 0 };
+  double servers_totalpmc[NEVT] = { 0 };
   for (int i = 0; i < nclients; i++) {
-    uint64_t tmp;
-    ReadCounter(i, 0, &tmp);
-    clients_totalpmc += tmp - pmclast[i];
+    for (int k = 0; k < NEVT; k++) {
+      uint64_t tmp;
+      ReadCounter(i, k, &tmp);
+      clients_totalpmc[k] += tmp - pmclast[k][i];
+    }
   }
   if (design == 1 || design == 2) {
     for (int i = first_core; i < first_core + nservers; i++) {
-      uint64_t tmp;
-      ReadCounter(i, 0, &tmp);
-      servers_totalpmc += tmp - pmclast[i];
+      for (int k = 0; k < NEVT; k++) {
+        uint64_t tmp;
+        ReadCounter(i, k, &tmp);
+        servers_totalpmc[k] += tmp - pmclast[k][i];
+      }
     }
   }
 
@@ -194,10 +215,16 @@ void run_benchmark()
   // print out all the important information
   printf("Benchmark Done. Design %d - Total time: %.3f, Iterations: %d\n", 
       design, tend - tstart, niters);
-  printf("nservers: %d, nclients: %d, partition overhead: %zu(bytes), nhits / nlookups: %.3f\n", 
-      nservers, nclients, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / stats_get_nlookups(hash_table));
-  printf("L2 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
-      clients_totalpmc / niters, servers_totalpmc / niters, (clients_totalpmc + servers_totalpmc) / niters);
+  printf("nservers: %d, nclients: %d, nhits / nlookups: %.3f\n", 
+      nservers, nclients, (double)stats_get_nhits(hash_table) / stats_get_nlookups(hash_table));
+  if (NEVT > 0) {
+    printf("L2 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
+        clients_totalpmc[0] / niters, servers_totalpmc[0] / niters, (clients_totalpmc[0] + servers_totalpmc[0]) / niters);
+  }
+  if (NEVT > 1) {
+    printf("L3 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
+        clients_totalpmc[1] / niters, servers_totalpmc[1] / niters, (clients_totalpmc[1] + servers_totalpmc[1]) / niters);
+  }
 
 #if 0
   double avg, stddev;
@@ -227,7 +254,7 @@ void get_random_query(int client_id, struct hash_query *query)
   }
 }
 
-void handle_query_result(struct hash_query *query, void *value)
+void handle_query_result(int client_id, struct hash_query *query, void *value)
 {
   long *val = value;
   if (query->optype == OPTYPE_LOOKUP) {
@@ -235,34 +262,61 @@ void handle_query_result(struct hash_query *query, void *value)
       if (val[0] != query->key) {
         printf("ERROR: values do not match: %ld, should be %ld\n", val[0], query->key);
       }
-      value_release(val);
+
+      if (design == 1 || design == 2) {
+        mp_release_value(hash_table, client_id, value);
+      } else {
+        atomic_release_value(value);
+      }
     }
   } else {
     assert(val != NULL);
     val[0] = query->key;
-    value_mark_ready(val);
+
+    if (design == 1 || design == 2) {
+      mp_mark_ready(hash_table, client_id, value);
+    } else {
+      atomic_mark_ready(value);
+    }
   }
 }
 
 void * client_design1(void *args)
 {
+  int r;
   int c = *(int *)args;
   set_affinity(c);
   
   int cid = create_hash_table_client(hash_table);
 
-  struct hash_query query;
+  struct hash_query *queries = (struct hash_query *)memalign(CACHELINE, batch_size * sizeof(struct hash_query));
   void *value;
+  int k = 0;
+  int j = 0;
   for (int i = 0; i < iters_per_client; i++) {
     // generate random query
-    get_random_query(c, &query);
-    if (query.optype == OPTYPE_LOOKUP) {
-      value = smp_hash_lookup(hash_table, cid, query.key);
+    get_random_query(c, &queries[k]);
+    if (queries[k].optype == OPTYPE_LOOKUP) {
+      r = smp_hash_lookup(hash_table, cid, queries[k].key);
     } else {
-      value = smp_hash_insert(hash_table, cid, query.key, query.size);
+      r = smp_hash_insert(hash_table, cid, queries[k].key, queries[k].size);
     }
+    assert(r == 1);
+    k = (k + 1) % batch_size;
 
-    handle_query_result(&query, value);
+    if (j == 1) {
+      r = smp_get_next(hash_table, cid, &value);
+      assert(r == 1);
+    
+      handle_query_result(cid, &queries[k], value);   
+    } else if (k == batch_size - 1) {
+      j = 1;
+    }
+  }
+
+  while ((r = smp_get_next(hash_table, cid, &value)) == 1) {
+    k = (k + 1) % batch_size;
+    handle_query_result(cid, &queries[k], value);
   }
   return NULL;
 }
@@ -286,7 +340,7 @@ void * client_design2(void *args)
     smp_hash_doall(hash_table, cid, nqueries, queries, values);
 
     for (int k = 0; k < nqueries; k++) {
-      handle_query_result(&queries[k], values[k]);
+      handle_query_result(cid, &queries[k], values[k]);
     }
     i += nqueries;
   }
@@ -312,7 +366,7 @@ void * client_design3(void *args)
       value = locking_hash_insert(hash_table, query.key, query.size);
     }
 
-    handle_query_result(&query, value);
+    handle_query_result(c, &query, value);
   }
   return NULL;
 }

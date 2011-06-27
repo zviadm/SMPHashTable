@@ -12,7 +12,6 @@ struct hash_table;
 /**
  * create_hash_table - Create new smp hash table
  * @max_size: maximum size in bytes that hash table can occupy
- * @nelems: maximum number of elements in hash table
  * @nservers: number of servers that serve hash content
  * @return: pointer to the created hash table
  */
@@ -29,7 +28,7 @@ void destroy_hash_table(struct hash_table *hash_table);
  * @hash_table: pointer to the hash table structure
  * @first_core: specifies what cores to run servers on [first_core..firt_core+nservers-1]
  *
- * start_hash_table_servers and stop_hash_table_servers must be called from
+ * start_hash_table_servers and stop_hash_table_servers must be called from the
  * same thread.
  */
 void start_hash_table_servers(struct hash_table *hash_table, int first_core);
@@ -52,10 +51,9 @@ int create_hash_table_client(struct hash_table *hash_table);
  * @hash_table: pointer to the hash table structure
  * @client_id: client id to use to communicate with hash table servers
  * @key: hash key to lookup value for
- * @return: pointer to hash_value structure holding value, or NULL if there
- * was no entry in hash table with given key
+ * @return: 1 for success, 0 on failure when the queue of pending requests is full
  */ 
-void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key);
+int smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key key);
 
 /**
  * smp_hash_insert: Insert key/value pair in hash table
@@ -63,10 +61,21 @@ void * smp_hash_lookup(struct hash_table *hash_table, int client_id, hash_key ke
  * @client_id: client id to use to communicate with hash table servers
  * @key: hash key
  * @size: size of data to insert
- * @return: pointer to newly allocated space of given size which client should
- * fill up with data
+ * @return: 1 for success, 0 on failure when the queue of pending requests is full
  */
-void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, int size);
+int smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key key, int size);
+
+/**
+ * smp_try_get_next: Try to get next value from scheduled pending requests
+ * Returns 1 on success, 0 if there are no available pending requests.
+ */
+int smp_try_get_next(struct hash_table *hash_table, int client_id, void **value);
+
+/**
+ * smp_get_next: Forces to get next value from schedule pending requests
+ * Returns 1 on success, 0 if there are no more pending requests.
+ */
+int smp_get_next(struct hash_table *hash_table, int client_id, void **value);
 
 /**
  * smp_hash_doall: Perform batch hash table queries
@@ -76,8 +85,8 @@ void * smp_hash_insert(struct hash_table *hash_table, int client_id, hash_key ke
  * @queries: hash table quries
  * @values: array to return results of queries
  *
- * Performing queries in batch is much faster then doing them one by one using
- * functions smp_hash_lookup and smp_hash_insert
+ * NOTE: this has become basically obsolete, it can be substituted by using 
+ * smp_hash_lookup, smp_hash_insert, AND get_next or try_get_next
  */
 void smp_hash_doall(struct hash_table *hash_table, int client_id, int nqueries, struct hash_query *queries, void **values);
 
@@ -111,18 +120,18 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key);
 void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size);
 
 /**
- * value_release: Release value
- * After client is done with looked up value from hash table, it must
- * release it so that if value is evicted its space can be reused
+ * mp_release_value, mp_mark_ready: Release given value pointer or mark it ready
+ * using message passing. Only works in server/client version
  */
-void value_release(void *ptr);
+void mp_release_value(struct hash_table *hash_table, int client_id, void *ptr);
+void mp_mark_ready(struct hash_table *hash_table, int client_id, void *ptr);
 
 /**
- * value_mark_ready: Mark value to be ready to use
- * After client copies data over to newly allocated element it must
- * mark it as ready to use
+ * atomic_release_value, atomic_mark_ready: Release given value pointer or mark it ready
+ * using atomic operations. Only works in locking implementation.
  */
-void value_mark_ready(void *ptr);
+void atomic_release_value(void *ptr);
+void atomic_mark_ready(void *ptr);
 
 /**
  * Stats functions
@@ -131,8 +140,7 @@ void stats_reset(struct hash_table *hash_table);
 int stats_get_nhits(struct hash_table *hash_table);
 int stats_get_nlookups(struct hash_table *hash_table);
 int stats_get_ninserts(struct hash_table *hash_table);
-size_t stats_get_overhead(struct hash_table *hash_table);
 void stats_get_buckets(struct hash_table *hash_table, int server, double *avg, double *stddev);
-void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total, double *util);
+void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total);
 
 #endif

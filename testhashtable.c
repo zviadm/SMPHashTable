@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "smphashtable.h"
 
@@ -9,27 +10,42 @@ static inline void insert(struct hash_table *table, int use_locking, int c, hash
 {
   void * value;
   if (use_locking == 0) {
-    value = smp_hash_insert(table, c, key, 8);
+    int r = smp_hash_insert(table, c, key, 8);
+    assert(r == 1);
+    r = smp_get_next(table, c, &value);
+    assert(r == 1);
   } else {
     value = locking_hash_insert(table, key, 8);
   }
   assert(value != NULL);
   *(long *)value = val;
-  value_mark_ready(value);
+  if (use_locking == 0) {
+    mp_mark_ready(table, c, value);
+  } else {
+    atomic_mark_ready(value);
+  }
 }
 
 static inline long lookup(struct hash_table *table, int use_locking, int c, hash_key key)
 {
   void * value;
   if (use_locking == 0) {
-    value = smp_hash_lookup(table, c, key);
+    int r = smp_hash_lookup(table, c, key);
+    assert(r == 1);
+    r = smp_get_next(table, c, &value);
+    assert(r == 1);
   } else {
     value = locking_hash_lookup(table, key);
   }
-  if (value == NULL) return 0;
-  else {
+  if (value == NULL) { 
+    return 0;
+  } else {
     long val = *(long *)value;
-    value_release(value);
+    if (use_locking == 0) {
+      mp_release_value(table, c, value);
+    } else {
+      atomic_release_value(value);
+    }
     return val;
   }
 }
@@ -148,6 +164,10 @@ void test3(int use_locking)
   printf("Inserting Elements using Client 1...\n");
   insert(table, use_locking, c1, 123, 0xDEADBEEF);
   insert(table, use_locking, c1, 1234, 0xFACEDEAD);
+  if (use_locking == 0) {
+    // need to wait to make sure mark ready is flushed
+    usleep(1000000);
+  }
 
   printf("Looking up Elements using Client 2...\n");
   long value;
@@ -159,6 +179,10 @@ void test3(int use_locking)
   
   printf("Rewriting Element using Client 2...\n");
   insert(table, use_locking, c2, 123, 0xACEACEACE);
+  if (use_locking == 0) {
+    // need to wait to make sure mark ready is flushed
+    usleep(1000000);
+  }
 
   printf("Looking up Element using Client 1...\n");
   value = lookup(table, use_locking, c2, 123);
@@ -205,7 +229,7 @@ void test4()
   for (int i = 0; i < nqueries; i++) {
     assert(values[i] != NULL);
     *(long *)values[i] = i;
-    value_mark_ready(values[i]);
+    mp_mark_ready(table, c, values[i]);
   }
 
   smp_hash_doall(table, c, nqueries, &queries[nqueries], values);
@@ -214,7 +238,7 @@ void test4()
   for (int i = 0; i < nqueries; i++) {
     assert(values[i] != NULL);
     assert(*(long*)values[i] == i);
-    value_release(values[i]);
+    mp_release_value(table, c, values[i]);
   }
 
   printf("Stopping Servers...\n");
