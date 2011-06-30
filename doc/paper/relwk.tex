@@ -1,43 +1,50 @@
 \section{Related Work}
+\label{sec:related}
 
-There already exists many different techniques to optimize use of caches on multi-core chips.
-In this chapter we present overview of some of those methods and describe how they differ from the approach
-taken in this thesis.
+Many different techniques to optimize use of caches on multi-core chips exist.
+This section presents relates these prior techniques to this paper's approach.
 
-\subsection{Multi-core Cache Management}
-
-Thread clustering~\cite{tam:threadclustering} dynamically clusters
-threads with their data on to a core and its associated cache. Chen et
-al.~\cite{chen-07} investigate two schedulers that attempt to schedule
-threads that share a working set on the same core so that they share
-the core's cache and reduce DRAM references.  Several researchers have
-used page coloring to attempt to partition on-chip caches between
-simultaneous executing applications~\cite{cho:micro,tam:sharedl2,lin:partitionl2,soares:pollute,zhang:pagecolor}. 
+Thread clustering~\cite{tam:threadclustering} dynamically clusters threads with
+their data on to a core and its associated cache. Chen et al.~\cite{chen-07}
+investigate two schedulers that attempt to schedule threads that share a working
+set on the same core so that they share the core's cache and reduce DRAM
+references.  Several researchers have used page coloring to attempt to partition
+on-chip caches between simultaneous executing
+applications~\cite{cho:micro,tam:sharedl2,lin:partitionl2,soares:pollute,zhang:pagecolor}.
 Chakraborty et al.~\cite{koushik:csp} propose computation spreading, which uses
-hardware-based migration to execute chunks of code from different
-threads on the same core to reduce i-cache misses.
+hardware-based migration to execute chunks of code from different threads on the
+same core to reduce i-cache misses.  These techniques are general-purpose
+runtime techniques, while the paper's methods focus specifically for scaling the
+data structures on many core processors.
 
-Several researchers place OS services on particular cores and invoke them with messages.
-Corey~\cite{corey:osdi08} can dedicate a core to handling a particular network device and its
-associated data structures.  Mogul et al. optimize some cores for energy-efficient execution of OS code~\cite{mogul:micro}.
-Suleman et al. put critical sections on fast cores~\cite{suleman:acs}.
-Barrelfish~\cite{barrelfish} and fos~\cite{wentzlaff:fos} treating cores as independent nodes that
-communicate using message passing. 
+Flat combining~\cite{flatcombining} has the same motivation. The main idea
+behind flat combining is to let a single thread gain global lock on a data
+structure and perform all the operations on it that all the other threads have
+scheduled. This way when multiple threads are competing for the global lock only
+one of them has to acquire it; others can just schedule their operation and wait
+for the result. This approach is somewhat similar to the approach that we take
+with \cphash{} in a sense that there is a server thread that performs all
+operations and there are client threads that schedule their operations. The main
+difference is that in \cphash{} there are multiple dedicated server threads that
+perform the operations and this server threads are pinned to specific cores.  On
+the other hand in flat combining there is a single thread at any time that acts
+as a server thread, but any thread can become the server thread.
 
-The methods described in this thesis focus specifically on data structures and are meant for providing techniques for scaling the 
-data structures on many core processors. Flat combining~\cite{flatcombining} has the same motivation. The main idea behind flat combining
-is to let a single thread gain global lock on a data structure and perform all the operations on it that all the other threads
-have scheduled. This way when multiple threads are competing for the global lock only one of them has to acquire it; others can just
-schedule their operation and wait for the result. This approach is somewhat similar to the approach that we take with \cphash{} in a sense that 
-there is a server thread that performs all operations and there are client threads that schedule their operations. The main difference is
-that in \cphash{} there are multiple dedicated server threads that perform the operations and this server threads are pinned to specific cores.
-On the other hand in flat combining there is a single thread at any time that acts as a server thread, but any thread can become the
-server thread.
+\cphash{} attempts to move computation close to data, and was inspired by
+computation migration in distributed shared memory systems such as
+MCRL~\cite{hsieh:sc} and Olden~\cite{olden} and remote method invocation in
+parallel programming languages such as Cool~\cite{COOL} and
+Orca~\cite{orca:tocs}.  \cphash{} isn't as general as these
+computation-migration systems, but applies the idea to a single data structure
+that is widely-used in server applications.
 
-\subsection{Computation Migration}
-
-\cphash{} attempts to move computation close to data, and was inspired by 
-computation migration in distributed shared memory systems such as MCRL~\cite{hsieh:sc} and
-Olden~\cite{olden} and remote method invocation in parallel programming languages such as 
-Cool~\cite{COOL} and Orca~\cite{orca:tocs}.
+Several researchers place OS services on particular cores and invoke them with
+messages.  Corey~\cite{corey:osdi08} can dedicate a core to handling a
+particular network device and its associated data structures.  Mogul et
+al. optimize some cores for energy-efficient execution of OS
+code~\cite{mogul:micro}.  Suleman et al. put critical sections on fast
+cores~\cite{suleman:acs}.  Barrelfish~\cite{barrelfish} and
+fos~\cite{wentzlaff:fos} treating cores as independent nodes that communicate
+using message passing.  \cphash{} is a specific example of combining advantages
+of shared-memory and message passing, within a single data structure.
 
