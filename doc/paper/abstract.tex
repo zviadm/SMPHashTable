@@ -1,14 +1,14 @@
 \begin{abstract}
 
-In this thesis we introduce \cphash{} $-$ a scalable fixed size hash
-table that supports eviction using an LRU list, and \cpserver{} $-$
-a scalable in memory key/value cache server that uses \cphash{} to
-implement its hash table. \cphash{} uses computation migration to avoid
-transferring data between cores.  Experiments on a 48 core machine show
-that \cphash{} has 2 to 3 times higher throughput than a hash table
-implemented using scalable fine-grained locks. \cpserver{} achieves 1.2
-to 1.7 times higher throughput than a key/value cache server that uses a
-hash table with scalable fine-grained locks and 1.5 to 2.6 times higher
-throughput than \memcached{}.
+  \cphash{} is a scalable fixed-size hash table with LRU-eviction for multicore
+  processors.  \cphash{} partitions its table across the caches of cores and
+  uses message passing to transfer lookups/inserts to a partition.  Compared to
+  a design with fine-grained locking, \cphash{} reduces coherence and capacity
+  misses.  Experiments on a 48 core machine show that \cphash{} has 2 to 3 times
+  higher throughput than a hash table implemented using scalable fine-grained
+  locks. \cpserver{}, a key/value cache server, using \cphash{}, achieves 1.2 to
+  1.7 times higher throughput than a key/value cache server that uses a hash
+  table with scalable fine-grained locks and 1.5 to 2.6 times higher throughput
+  than \memcached{}.
 
 \end{abstract}
