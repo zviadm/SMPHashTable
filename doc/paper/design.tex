@@ -74,16 +74,50 @@ the server returns a \texttt{NULL}.
 
 Performing an \texttt{Insert} operation is slightly more complicated. \cphash{}
 is non-intrusive and supports arbitrary length values; thus, for an insert
-operation memory must be allocated for the value. In \cphash{}, the memory for
-the value is allocated by the server thread but the data itself is copied by the
-client thread. Thus, to perform an \texttt{Insert} operation, the server must
-receive the \texttt{key} and the \texttt{size} of the data. The server thread
-allocates \texttt{size} bytes of memory and removes the existing key/value pair
-with the given \texttt{key} (if it exists) from the partition, to avoid having
-duplicate keys for two different elements. The server returns a pointer to the
-allocated memory to the client, which the client fills in with the actual
-data. Section~\ref{sec:mm} describes memory management in more detail.
-  
+operation memory must be allocated for the value and the value must be copied
+into the allocated memory.  It is convenient to allocate memory in the server
+thread since each server is responsible for a single partition and so \cphash{}
+can use a standard single-threaded memory allocator.  However, performing the
+actual data copying in the server thread is a bad design since for large values
+it wipes out the local hardware cache of the server core. Thus, in \cphash{} the
+space allocation is done in the server thread and the actual data copying is
+performed in the client thread.
+
+Thus, to perform an \texttt{Insert} operation, the server must receive the
+\texttt{key} and the \texttt{size} of the data. The server thread allocates
+\texttt{size} bytes of memory and removes the existing key/value pair with the
+given \texttt{key} (if it exists) from the partition, to avoid having duplicate
+keys for two different elements.  The allocated space is marked as ``NOT READY''
+and will not be used until it is marked as ``READY''.  The client receives the
+pointer, copies the data to the location pointed by the given pointer, and marks
+that space as ``READY''.  The current \cphash{} implementation this marking is
+done using atomic operations. 
+
+When a server thread evicts or deletes an element from the hash table, the
+memory allocated for the evicted value must be freed so that it can be reused
+for new elements. It is incorrect for a server thread to just free the allocated
+memory when it evicts or deletes an element. The problem is that if a client
+requests a \texttt{Lookup} for some element and receives the pointer to its
+value, and then the server threads evicts the element from the hash table before
+the client is done processing its value, the client will have a dangling pointer
+pointing to memory that might have been reallocated to a new value.  To resolve
+this issue, \cphash{} counts references to an element.  Each element in the hash
+table has a reference count. Every time a client requests a \texttt{Lookup} of
+an element, the server thread increases the element's reference count. When the
+client is done with the item, it decreases the reference count of the element.
+When the reference count reaches 0, the space can be safely deallocated.
+\cphash{} implements reference counting using atomic operations.
+
+The actual deallocation must be done by a server thread, otherwise there would
+be a race between allocations and deallocations within partition. When a client
+decreases a reference count and it becomes zero, \cphash{} needs some way to
+schedule an element for freeing in the corresponding server thread.  To do so,
+\cphash{} uses a lock-free singly-linked list using atomic operations that holds
+the list of elements that can be safely freed. Scheduled elements are freed in
+the server thread before the next allocation.
+
+\XXX{maybe messages are used instead of atomic instructions.}
+
 \subsection{Client Threads}
 \label{sec:clientthreads}
 
