@@ -1,22 +1,9 @@
 \section{Performance Evaluation}
-\label{chap:eval}
+\label{sec:eval}
 
-In this chapter we discuss the performance results that we achieved using \cphash{} and \cpserver{}. In the following sections we 
+In this section we discuss the performance results that we achieved using \cphash{} and \cpserver{}. In the following sections we 
 first discuss our alternative implementations that were developed for comparative benchmarking. Then we present our evaluation of the scalability 
 and performance of \cphash{}. Finally we provide the benchmark results for \cpserver{}
-
-\subsection{Alternative Hash Table and Key/Value Cache Server Implementations using Locks}
-
-To evaluate the performance and scalability of \cphash{}, we created an alternative implementation
-of the hash table that does not use computation migration. This version is implemented in a traditional shared memory 
-style with scalable fine-grained locks. In this alternative implementation, each partition is protected by
-a lock and there are no server threads. The client threads process queries by first acquiring the lock for
-the appropriate partition, then performing the query, updating the LRU list and, finally, releasing the lock. We call this implementation \lockhash{}.
-We use this alternative implementation for comparison with \cphash{} to show that computation migration provides much
-better scalability and performance than having scalable locks.
-
-In addition to developing the alternative hash table implementation we also developed an alternative key/value cache server implementation
-that uses \lockhash{} as its hash table instead of \cphash{}. We call this alternative server implementation \lockserver{}.
 
 \subsection{Hash Table Performance}
 

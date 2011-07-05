@@ -126,10 +126,10 @@ perform operations. An example of a client thread in an application is the
 client thread in \cpserver{}'s implementation. The client threads in \cpserver{}
 gather operations from TCP connections, route them to the appropriate server
 threads, gather the results, and send them back to the correct TCP
-connections. Section \ref{chap:cpserver} describes \cpserver{}'s implementation
-in more detail.  Client threads do not necessarily have to be pinned to a
-specific core but, to achieve the highest performance in message passing, it is
-best to keep the client threads attached to a specific core.
+connections. Section \ref{sec:server} describes \cpserver{}'s implementation in
+more detail.  Client threads do not necessarily have to be pinned to a specific
+core but, to achieve the highest performance in message passing, it is best to
+keep the client threads attached to a specific core.
 
 \subsection{Buffering and Batching}
 \label{sec:msgpassing}
@@ -204,7 +204,7 @@ accessing and modifying the data, the hardware cache-coherence protocol will not
 send invalidations for data that is written. Furthermore, all frequently
 accessed structures, such as, the LRU list, buckets array, free list, etc can
 stay in the local cache and can be read and modified fast.  Section
-\ref{chap:eval} shows that this benefit results in a significant performance
+\ref{sec:eval} shows that this benefit results in a significant performance
 improvement.
 
 The second advantage is avoiding synchronization for shared data access. Since

@@ -36,3 +36,21 @@ more scalable message passing implementation.
 Another idea to improve the current message passing implementation is to change the design of the circular buffer to eliminate the read and write indexes
 to further decrease average cache misses spent on message passing per each query. 
 
+
+
+\subsection{Handling Any Size Keys}
+\label{sec:anykey}
+
+In our current implementation only 60 bit hash keys are supported. This can easily be extended to any size keys
+without modifying \cpserver{}. The main idea to support any size keys is to use the 60 bit hash of the given any size key as a hash key and store both the 
+key and the value together as a value. Then to perform the LOOKUP of a certain key, we would first calculate the hash key
+and lookup the value associated with it. If such a value exists it would contain both the key string and the value string in
+it. Then before returning the value we would compare the key string to the actual key that we wanted to lookup and if
+return the value. If the key strings do not match, this would mean we got hash collision since their hash values match but the 
+strings itself do not. In this case we would just return that the value was not found. The chance of collision with 60 bit keys 
+would be very small, especially considering the fact that the hash table is stored in memory thus it can not have more than 
+couple billion elements in it.
+
+To perform the INSERT operation we would calculate the hash key from the key string and insert a key/value pair in the hash table
+where the key would be our calculated hash key and the value would be a combined string of both the key and the value.
+
