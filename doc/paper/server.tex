@@ -54,8 +54,8 @@ work loads in which the traffic on different connections differ significantly.
 \subsection{\lockserver{}}
 
 To evaluate the performance and scalability of \cphash{}, we created
-\lockserver{}, which does not use computation migration, but supports the same
-protocol. This version uses a shared-memory style hash table, which we name
+\lockserver{}, which does not use message passing. It supports the same
+protocol, but uses a shared-memory style hash table, which we name
 \lockhash{}, with scalable fine-grained locks.  To make the comparison fair,
 \lockhash{} also has $n$ LRU lists instead of 1 global one, by dividing the hash
 table into $n$ partitions.  Each partition is protected by a lock to protect the
