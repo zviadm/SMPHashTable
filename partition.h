@@ -22,8 +22,10 @@ struct elem {
   char value[0];
 };
 
+TAILQ_HEAD(elist, elem);
+
 struct bucket {
-  TAILQ_HEAD(elist, elem) chain;
+  struct elist chain;
 };
 
 struct partition {
@@ -31,12 +33,14 @@ struct partition {
   int nhash;
   size_t max_size;
   struct bucket *table;
-  TAILQ_HEAD(lrulist, elem) lru;
+  struct elist lru;
 
   // stats
   int nhits;
   int nlookups;
   int ninserts;
+
+  int do_lru;	       // flag to enable/disable LRU
 
   struct localmem mem; // local memory
   struct alock lock;   // partition lock for locking implementation
@@ -44,7 +48,7 @@ struct partition {
 
 typedef void release_value_f(struct elem *e);
 
-void init_hash_partition(struct partition *p, size_t max_size, int nservers);
+void init_hash_partition(struct partition *p, size_t max_size, int nservers, int do_lru);
 void destroy_hash_partition(struct partition *p, release_value_f *release);
 
 struct elem * hash_lookup(struct partition *p, hash_key key);

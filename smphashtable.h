@@ -15,7 +15,7 @@ struct hash_table;
  * @nservers: number of servers that serve hash content
  * @return: pointer to the created hash table
  */
-struct hash_table *create_hash_table(size_t max_size, int nservers); 
+struct hash_table *create_hash_table(size_t max_size, int nservers, int do_lru); 
 
 /**
  * destroy_hash_table - Destroy smp hash table

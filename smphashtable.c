@@ -92,7 +92,7 @@ static inline int hash_get_server(const struct hash_table *hash_table, hash_key 
   return key % hash_table->nservers;
 }
 
-struct hash_table *create_hash_table(size_t max_size, int nservers) 
+struct hash_table *create_hash_table(size_t max_size, int nservers, int do_lru) 
 {
   struct hash_table *hash_table = (struct hash_table *)malloc(sizeof(struct hash_table));
   hash_table->nservers = nservers;
@@ -104,7 +104,7 @@ struct hash_table *create_hash_table(size_t max_size, int nservers)
   hash_table->pending_data = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct pending_data *));
   hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
   for (int i = 0; i < hash_table->nservers; i++) {
-    init_hash_partition(&hash_table->partitions[i], max_size / nservers, nservers);
+    init_hash_partition(&hash_table->partitions[i], max_size / nservers, nservers, do_lru);
   }
 
   hash_table->threads = (pthread_t *)malloc(nservers * sizeof(pthread_t));
@@ -570,11 +570,13 @@ void stats_get_buckets(struct hash_table *hash_table, int server, double *avg, d
 
   int nelems = 0;
   struct elem *e;
- 
-  e = TAILQ_FIRST(&p->lru);
-  while (e != NULL) {
-    nelems++;
-    e = TAILQ_NEXT(e, lru);
+
+  for (int i = 0; i < p->nhash; i++) {
+    e = TAILQ_FIRST(&p->table[i].chain);
+    while (e != NULL) {
+      nelems++;
+      e = TAILQ_NEXT(e, chain);
+    }
   }
   *avg = (double)nelems / p->nhash;
   *stddev = 0;

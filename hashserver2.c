@@ -124,7 +124,7 @@ void print_stats()
 
 void run_server() 
 {
-  hash_table = create_hash_table(size, nservers);
+  hash_table = create_hash_table(size, nservers, 1);
 
   if (design == 1 || design == 2) {
     start_hash_table_servers(hash_table, 0);

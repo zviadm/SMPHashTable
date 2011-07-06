@@ -54,7 +54,7 @@ void test1(int use_locking)
 {
   printf("----------- Test 1 Start -----------\n");
   printf("Creating Hash Table...\n");
-  struct hash_table *table = create_hash_table(65536, 2);
+  struct hash_table *table = create_hash_table(65536, 2, 1);
   int c = 0;
   if (use_locking == 0) {
     printf("Starting Servers...\n");
@@ -101,7 +101,7 @@ void test2(int use_locking)
   printf("----------- Test 2 Start -----------\n");
   printf("Creating Hash Table...\n");
   long max_count = 1024;
-  struct hash_table *table = create_hash_table(2 * max_count * 128, 2);
+  struct hash_table *table = create_hash_table(2 * max_count * 128, 2, 1);
   int c = 0;
   if (use_locking == 0) {
     printf("Starting Servers...\n");
@@ -148,7 +148,7 @@ void test3(int use_locking)
 {
   printf("----------- Test 3 Start -----------\n");
   printf("Creating Hash Table...\n");
-  struct hash_table *table = create_hash_table(65536, 2);
+  struct hash_table *table = create_hash_table(65536, 2, 1);
   int c1 = 0;
   int c2 = 0;
   if (use_locking == 0) {
@@ -202,7 +202,7 @@ void test4()
 {
   printf("----------- Test 4 Start -----------\n");
   printf("Creating Hash Table...\n");
-  struct hash_table *table = create_hash_table(131072, 2);
+  struct hash_table *table = create_hash_table(131072, 2, 1);
   printf("Starting Servers...\n");
   start_hash_table_servers(table, 0);
 
