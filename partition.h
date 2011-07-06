@@ -29,18 +29,18 @@ struct bucket {
 };
 
 struct partition {
+  int do_lru;	// flag to enable/disable LRU
   int nservers;
   int nhash;
   size_t max_size;
   struct bucket *table;
+  struct alock *bucketlocks;
   struct elist lru;
 
   // stats
   int nhits;
   int nlookups;
   int ninserts;
-
-  int do_lru;	       // flag to enable/disable LRU
 
   struct localmem mem; // local memory
   struct alock lock;   // partition lock for locking implementation
@@ -53,5 +53,6 @@ void destroy_hash_partition(struct partition *p, release_value_f *release);
 
 struct elem * hash_lookup(struct partition *p, hash_key key);
 struct elem * hash_insert(struct partition *p, hash_key key, int size, release_value_f *release);
+int hash_get_bucket(const struct partition *p, hash_key key);
 
 #endif

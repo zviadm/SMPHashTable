@@ -432,7 +432,16 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
   int s = hash_get_server(hash_table, key);
   void *value = NULL;
   int extra;
-  anderson_acquire(&hash_table->partitions[s].lock, &extra);
+  struct alock *l;
+  struct partition *p = &hash_table->partitions[s];
+
+  if (1 /* p->do_lru */) {
+    l = &p->lock;
+  } else {
+    l = &p->bucketlocks[hash_get_bucket(p, key)];
+  }
+
+  anderson_acquire(l, &extra);
   hash_table->partitions[s].nlookups++;
   struct elem *e = hash_lookup(&hash_table->partitions[s], key);
   if (e != NULL && is_value_ready(e)) {
@@ -440,7 +449,7 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
     __sync_add_and_fetch(&(e->ref_count), 1);
     value = e->value;
   }
-  anderson_release(&hash_table->partitions[s].lock, &extra);
+  anderson_release(l, &extra);
   return value;
 }
 
@@ -449,14 +458,23 @@ void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size
   int s = hash_get_server(hash_table, key);
   void *value = NULL;
   int extra;
-  anderson_acquire(&hash_table->partitions[s].lock, &extra);
+  struct alock *l;
+  struct partition *p = &hash_table->partitions[s];
+
+  if (1 /* p->do_lru */) {
+    l = &p->lock;
+  } else {
+    l = &p->bucketlocks[hash_get_bucket(p, key)];
+  }
+
+  anderson_acquire(l, &extra);
   hash_table->partitions[s].ninserts++;
   struct elem *e = hash_insert(&hash_table->partitions[s], key, size, atomic_release_value_);
   if (e != NULL) {
     e->ref_count = DATA_READY_MASK | 1;
     value = e->value;
   }
-  anderson_release(&hash_table->partitions[s].lock, &extra);
+  anderson_release(l, &extra);
   return value;
 }
 

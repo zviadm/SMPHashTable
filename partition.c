@@ -40,6 +40,10 @@ void init_hash_partition(struct partition *p, size_t max_size, int nservers, int
     TAILQ_INIT(&p->lru);
   localmem_init(&p->mem, p->max_size);
   anderson_init(&p->lock, nservers);
+
+  p->bucketlocks = memalign(CACHELINE, p->nhash * sizeof(struct alock));
+  for (int i = 0; i < p->nhash; i++)
+    anderson_init(&p->bucketlocks[i], nservers);
 }
 
 void destroy_hash_partition(struct partition *p, release_value_f *release)
@@ -56,12 +60,13 @@ void destroy_hash_partition(struct partition *p, release_value_f *release)
   localmem_destroy(&p->mem);
 
   free(p->table);
+  free(p->bucketlocks);
 }
 
 /**
  * hash_get_bucket: returns bucket were given key is or should be placed
  */
-static inline int hash_get_bucket(const struct partition *p, hash_key key)
+int hash_get_bucket(const struct partition *p, hash_key key)
 {
   return key % p->nhash;
 }
