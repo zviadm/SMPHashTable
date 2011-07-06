@@ -4,7 +4,7 @@
 #include <sys/types.h>
 
 #define CACHELINE   64 
-#define MAX_CLIENTS 128
+#define MAX_CLIENTS 160
 #define MAX_SERVERS 160
 
 pid_t gettid(void);
