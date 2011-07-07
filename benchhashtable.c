@@ -123,14 +123,14 @@ void run_benchmark()
 {
   srand(19890811);
 
-  printf("Design:       %d (%s LRU)\n", design, do_lru ? "with" : "without");
-  printf("# clients:    %d\n", nclients);
+  printf(" Design:       %d (%s LRU)\n", design, do_lru ? "with" : "without");
+  printf(" # clients:    %d\n", nclients);
   if (design == 1 || design == 2)
-    printf("# servers:    %d\n", nservers);
-  printf("Key range:    0..2^%d\n", 31-query_shift);
-  printf("Write ratio:  %.3f\n", (double)write_threshold / (double)RAND_MAX);
-  printf("Total memory: %ld bytes\n", size);
-  printf("Iterations:   %d\n", niters);
+    printf(" # servers:    %d\n", nservers);
+  printf(" Key range:    0..2^%d\n", 31-query_shift);
+  printf(" Write ratio:  %.3f\n", (double)write_threshold / (double)RAND_MAX);
+  printf(" Total memory: %ld bytes\n", size);
+  printf(" Iterations:   %d\n", niters);
 
   if (design == 3)
     nservers = nclients;
@@ -225,14 +225,14 @@ void run_benchmark()
 
   // print out all the important information
   printf("== results ==\n");
-  printf("Total time:      %.3f\n", tend - tstart);
-  printf("Lookup hit rate: %.3f\n", (double)stats_get_nhits(hash_table) / stats_get_nlookups(hash_table));
+  printf(" Total time:      %.3f\n", tend - tstart);
+  printf(" Lookup hit rate: %.3f\n", (double)stats_get_nhits(hash_table) / stats_get_nlookups(hash_table));
   if (NEVT > 0) {
-    printf("L2 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
+    printf(" L2 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
         clients_totalpmc[0] / niters, servers_totalpmc[0] / niters, (clients_totalpmc[0] + servers_totalpmc[0]) / niters);
   }
   if (NEVT > 1) {
-    printf("L3 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
+    printf(" L3 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
         clients_totalpmc[1] / niters, servers_totalpmc[1] / niters, (clients_totalpmc[1] + servers_totalpmc[1]) / niters);
   }
 
