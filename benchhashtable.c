@@ -127,13 +127,12 @@ void run_benchmark()
   printf(" # clients:    %d\n", nclients);
   if (design == 1 || design == 2)
     printf(" # servers:    %d\n", nservers);
+  if (design == 3)
+    printf(" # partitions: %d\n", nservers);
   printf(" Key range:    0..2^%d\n", 31-query_shift);
   printf(" Write ratio:  %.3f\n", (double)write_threshold / (double)RAND_MAX);
   printf(" Total memory: %ld bytes\n", size);
   printf(" Iterations:   %d\n", niters);
-
-  if (design == 3)
-    nservers = nclients;
 
   hash_table = create_hash_table(size, nservers, do_lru);
   cdata = malloc(nclients * sizeof(struct client_data));

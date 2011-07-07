@@ -5,8 +5,8 @@
 #include <stdint.h>
 
 #define CACHELINE   64 
-#define MAX_CLIENTS 256
-#define MAX_SERVERS 256
+#define MAX_CLIENTS 1024
+#define MAX_SERVERS 1024
 
 pid_t gettid(void);
 void set_affinity(int cpu_id);
