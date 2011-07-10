@@ -15,7 +15,7 @@ struct hash_table;
  * @nservers: number of servers that serve hash content
  * @return: pointer to the created hash table
  */
-struct hash_table *create_hash_table(size_t max_size, int nservers); 
+struct hash_table *create_hash_table(size_t max_size, int nservers, int do_lru); 
 
 /**
  * destroy_hash_table - Destroy smp hash table
@@ -140,8 +140,7 @@ void stats_reset(struct hash_table *hash_table);
 int stats_get_nhits(struct hash_table *hash_table);
 int stats_get_nlookups(struct hash_table *hash_table);
 int stats_get_ninserts(struct hash_table *hash_table);
-size_t stats_get_overhead(struct hash_table *hash_table);
 void stats_get_buckets(struct hash_table *hash_table, int server, double *avg, double *stddev);
-void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total, double *util);
+void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total);
 
 #endif

@@ -118,15 +118,13 @@ void print_stats()
       nhits, nlookups, ninserts, (double)nhits / nlookups, (double)ninserts / (nlookups + ninserts));
 
   size_t used, total;
-  double util;
-  stats_get_mem(hash_table, &used, &total, &util);
-  printf("memory used: %zu (%.2f%%), total: %zu, utilization: %.2f%%\n", 
-      used, (double) used / total * 100.0, total, util * 100.0);
+  stats_get_mem(hash_table, &used, &total);
+  printf("memory used: %zu (%.2f%%), total: %zu \n", used, (double) used / total * 100.0, total);
 }
 
 void run_server() 
 {
-  hash_table = create_hash_table(size, nservers);
+  hash_table = create_hash_table(size, nservers, 1);
 
   if (design == 1 || design == 2) {
     start_hash_table_servers(hash_table, 0);
@@ -147,8 +145,7 @@ void run_server()
   }
 
   printf("Starting Hash Server...\n"); 
-  printf("design: %d, nservers: %d, nclients: %d, partition: %zu(bytes)\n", 
-      design, nservers, nclients, stats_get_overhead(hash_table) / nservers);
+  printf("design: %d, nservers: %d, nclients: %d", design, nservers, nclients);
 
   // start client threads
   int ret;

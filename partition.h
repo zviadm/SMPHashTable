@@ -24,17 +24,21 @@ struct elem {
   char value[0];
 };
 
+TAILQ_HEAD(elist, elem);
+
 struct bucket {
-  TAILQ_HEAD(elist, elem) chain;
+  struct elist chain;
 };
 
 struct partition {
+  int do_lru;	// flag to enable/disable LRU
   int nservers;
   int nhash;
   size_t max_size;
   size_t size;
   struct bucket *table;
-  TAILQ_HEAD(lrulist, elem) lru;
+  struct alock *bucketlocks;
+  struct elist lru;
 
   // stats
   int nhits;
@@ -46,10 +50,11 @@ struct partition {
 
 typedef void release_value_f(struct elem *e);
 
-void init_hash_partition(struct partition *p, size_t max_size, int nservers);
+void init_hash_partition(struct partition *p, size_t max_size, int nservers, int do_lru);
 void destroy_hash_partition(struct partition *p, release_value_f *release);
 
 struct elem * hash_lookup(struct partition *p, hash_key key);
 struct elem * hash_insert(struct partition *p, hash_key key, int size, release_value_f *release);
+int hash_get_bucket(const struct partition *p, hash_key key);
 
 #endif

@@ -34,12 +34,12 @@ int nservers        = 1;
 int nclients        = 1;
 int first_core      = -1;
 int batch_size      = 1000;
-int niters          = 100000;
-int nelems          = 100000;
+int niters          = 100000000;
 size_t size         = 6400000;
 int query_mask      = (1 << 20) - 1;
 int query_shift     = (31 - 20);
 int write_threshold = (0.3f * (double)RAND_MAX);
+int do_lru          = 1;
 
 struct hash_table *hash_table;
 long rand_data[10000] = { 0 };
@@ -63,7 +63,7 @@ int main(int argc, char *argv[])
 {
   int opt_char;
 
-  while((opt_char = getopt(argc, argv, "s:c:f:i:n:t:m:w:d:f:b:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:c:f:i:n:t:m:w:d:f:b:l:")) != -1) {
     switch (opt_char) {
       case 's':
         nservers = atoi(optarg);
@@ -76,9 +76,6 @@ int main(int argc, char *argv[])
         break;
       case 'i':
         niters = atoi(optarg);
-        break;
-      case 'n':
-        nelems = atoi(optarg);
         break;
       case 't':
         size = atol(optarg);
@@ -97,6 +94,9 @@ int main(int argc, char *argv[])
       case 'b':
         batch_size = atoi(optarg);
         break;
+      case 'l':
+	do_lru = atoi(optarg);
+	break;
       default:
         printf("benchmark options are: \n"
                "   -d design (1 = server/client, 2 = old-style server/client, 3 = locking)\n"
@@ -104,11 +104,11 @@ int main(int argc, char *argv[])
                "   -c number of clients\n"
                "   -b batch size (for design 2)\n"
                "   -i number of iterations\n"
-               "   -n max number of elements in cache\n"
                "   -t max size of cache (in bytes)\n"
                "   -m log of max hash key\n"
                "   -w hash insert ratio over total number of queries\n"
-               "example './benchmarkhashtable -d 2 -s 3 -c 3 -f 3 -b 1000 -i 100000000 -n 10000 -t 640000 -m 15 -w 0.3'\n");
+	       "   -l (0|1)     enable (default, 1) or disable (0) LRU\n"
+               "example './benchmarkhashtable -d 2 -s 3 -c 3 -f 3 -b 1000 -i 100000000 -t 640000 -m 15 -w 0.3'\n");
         exit(-1);
     }
   }
@@ -123,7 +123,18 @@ void run_benchmark()
 {
   srand(19890811);
 
-  hash_table = create_hash_table(size, nservers);
+  printf(" Design:       %d (%s LRU)\n", design, do_lru ? "with" : "without");
+  printf(" # clients:    %d\n", nclients);
+  if (design == 1 || design == 2)
+    printf(" # servers:    %d\n", nservers);
+  if (design == 3)
+    printf(" # partitions: %d\n", nservers);
+  printf(" Key range:    0..2^%d\n", 31-query_shift);
+  printf(" Write ratio:  %.3f\n", (double)write_threshold / (double)RAND_MAX);
+  printf(" Total memory: %ld bytes\n", size);
+  printf(" Iterations:   %d\n", niters);
+
+  hash_table = create_hash_table(size, nservers, do_lru);
   cdata = malloc(nclients * sizeof(struct client_data));
   for (int i = 0; i < nclients; i++) {
     cdata[i].seed = rand();
@@ -133,7 +144,6 @@ void run_benchmark()
     rand_data[i] = i;
   }
 
-  printf("Benchmark starting...\n"); 
   // start the clients
   //ProfilerStart("cpu.info"); 
   double tstart = now();
@@ -213,16 +223,15 @@ void run_benchmark()
   //ProfilerStop();
 
   // print out all the important information
-  printf("Benchmark Done. Design %d - Total time: %.3f, Iterations: %d\n", 
-      design, tend - tstart, niters);
-  printf("nservers: %d, nclients: %d, partition overhead: %zu(bytes), nhits / nlookups: %.3f\n", 
-      nservers, nclients, stats_get_overhead(hash_table) / nservers, (double)stats_get_nhits(hash_table) / stats_get_nlookups(hash_table));
+  printf("== results ==\n");
+  printf(" Total time:      %.3f\n", tend - tstart);
+  printf(" Lookup hit rate: %.3f\n", (double)stats_get_nhits(hash_table) / stats_get_nlookups(hash_table));
   if (NEVT > 0) {
-    printf("L2 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
+    printf(" L2 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
         clients_totalpmc[0] / niters, servers_totalpmc[0] / niters, (clients_totalpmc[0] + servers_totalpmc[0]) / niters);
   }
   if (NEVT > 1) {
-    printf("L3 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
+    printf(" L3 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
         clients_totalpmc[1] / niters, servers_totalpmc[1] / niters, (clients_totalpmc[1] + servers_totalpmc[1]) / niters);
   }
 

@@ -1,0 +1,56 @@
+\section{Future Work}
+\label{chap:futurework}
+
+\cphash{} demonstrates that by using computation migration, message passing and careful memory management techniques it is
+possible to create a scalable hash table implementation for the multi-core NUMA architecture machines. However, there is still
+room for improvement of \cphash{}'s implementation. 
+
+\subsection{Dynamic Adjusting of the Server Threads}
+
+One issue with the current design is that a fixed number of cores must to be dedicated to run the server threads. 
+A better approach would be to have an algorithm that would dynamically decide on how many cores to use for the server threads, 
+depending on the workload. Such dynamic adjustment of the server threads would make it possible to use less power and CPU resources
+when the workload is small. Saving power is essential for any data center due to reduced cost. Using less CPU resources
+would make it possible to run other services on the same machine when there is not much load on the hash table. 
+
+Dynamic adjustment of the server threads could also provide higher performance. 
+If the CPU resources needed by the client threads to generate the queries is less than the resources needed by the server threads 
+to complete the queries, then it is better to dedicate more cores to run the server threads than to the client threads. 
+On the other hand, if the client threads need more CPU resources to generate the queries, it is better to dedicate fewer cores to run
+the server threads and use more cores for the client threads. 
+
+We have not tried implementing dynamic adjustment of server threads due to time constraint reasons; however, we tried
+a different approach to avoid wasting the CPU resources. We tried utilizing CPUs with Intel's HyperThreading technology to run 
+the server and the client threads on two separate logical cores of the same physical core. The problem we discovered with this approach is that 
+since the logical cores share the L2 cache, the client thread can easily pollute the whole cache thus nullifying most of the benefits of the \cphash{}
+design. This is especially true for an application such as \cpserver{}, since the connection buffers themselves can take most of the space in the cache.
+
+\subsection{Message Passing}
+
+The scalability and performance of message passing is important for \cphash{}. The current implementation is simple and does not use
+any hardware specific operations to further speedup the communication between the server and the client threads. One possible improvement is to
+forcefully flush the caches when the buffer is full, this way the overhead of sending the message would shift more from the receiver towards the sender. 
+Such an approach could be beneficial to decrease the time spent on reading the message buffers in server threads. Such an approach could potential provide
+more scalable message passing implementation. 
+
+Another idea to improve the current message passing implementation is to change the design of the circular buffer to eliminate the read and write indexes
+to further decrease average cache misses spent on message passing per each query. 
+
+
+
+\subsection{Handling Any Size Keys}
+\label{sec:anykey}
+
+In our current implementation only 60 bit hash keys are supported. This can easily be extended to any size keys
+without modifying \cpserver{}. The main idea to support any size keys is to use the 60 bit hash of the given any size key as a hash key and store both the 
+key and the value together as a value. Then to perform the LOOKUP of a certain key, we would first calculate the hash key
+and lookup the value associated with it. If such a value exists it would contain both the key string and the value string in
+it. Then before returning the value we would compare the key string to the actual key that we wanted to lookup and if
+return the value. If the key strings do not match, this would mean we got hash collision since their hash values match but the 
+strings itself do not. In this case we would just return that the value was not found. The chance of collision with 60 bit keys 
+would be very small, especially considering the fact that the hash table is stored in memory thus it can not have more than 
+couple billion elements in it.
+
+To perform the INSERT operation we would calculate the hash key from the key string and insert a key/value pair in the hash table
+where the key would be our calculated hash key and the value would be a combined string of both the key and the value.
+

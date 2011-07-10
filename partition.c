@@ -13,12 +13,13 @@
 
 #define BUCKET_LOAD (2 * 128) // Min Element Size is 128 bytes, so bucket on average will hold 2 elements
 
-void init_hash_partition(struct partition *p, size_t max_size, int nservers)
+void init_hash_partition(struct partition *p, size_t max_size, int nservers, int do_lru)
 {
   assert((unsigned long)p % CACHELINE == 0);
   p->nservers = nservers;
   p->max_size = max_size;
   p->size = 0;
+  p->do_lru = do_lru;
 
   // below is a trick to make GCD of p->nhash and nservers equal to 1
   // it can be proved that if GCD of nhash and nservers is 1 then, hash_get_server and
@@ -35,31 +36,38 @@ void init_hash_partition(struct partition *p, size_t max_size, int nservers)
     TAILQ_INIT(&(p->table[i].chain));
   }
 
-  TAILQ_INIT(&p->lru);
+  if (p->do_lru)
+    TAILQ_INIT(&p->lru);
   anderson_init(&p->lock, nservers);
+
+  p->bucketlocks = memalign(CACHELINE, p->nhash * sizeof(struct alock));
+  for (int i = 0; i < p->nhash; i++)
+    anderson_init(&p->bucketlocks[i], nservers);
 }
 
 void destroy_hash_partition(struct partition *p, release_value_f *release)
 {
-  struct lrulist *eh = &p->lru;
-  struct elem *e = TAILQ_FIRST(eh);
-  struct elem *next;
   size_t dbg_p_size = 0;
-  while (e != NULL) {
-    next = TAILQ_NEXT(e, lru);
-    dbg_p_size += e->size;
-    release(e);
-    e = next;
+  for (int i = 0; i < p->nhash; i++) {
+    struct elist *eh = &p->table[i].chain;
+    struct elem *e = TAILQ_FIRST(eh);
+    while (e != NULL) {
+      struct elem *next = TAILQ_NEXT(e, chain);
+      dbg_p_size += e->size;
+      release(e);
+      e = next;
+    }
   }
 
   assert(p->size == dbg_p_size);
   free(p->table);
+  free(p->bucketlocks);
 }
 
 /**
  * hash_get_bucket: returns bucket were given key is or should be placed
  */
-static inline int hash_get_bucket(const struct partition *p, hash_key key)
+int hash_get_bucket(const struct partition *p, hash_key key)
 {
   return key % p->nhash;
 }
@@ -70,14 +78,17 @@ void hash_remove(struct partition *p, struct elem *e)
   p->size -= e->size;
   assert(p->size > 0);
   TAILQ_REMOVE(eh, e, chain);
-  TAILQ_REMOVE(&p->lru, e, lru);
+  if (p->do_lru)
+    TAILQ_REMOVE(&p->lru, e, lru);
 }
 
 void lru(struct partition *p, struct elem *e)
 {
   assert(e);
-  TAILQ_REMOVE(&p->lru, e, lru);
-  TAILQ_INSERT_HEAD(&p->lru, e, lru);
+  if (p->do_lru) {
+    TAILQ_REMOVE(&p->lru, e, lru);
+    TAILQ_INSERT_HEAD(&p->lru, e, lru);
+  }
 }
 
 struct elem * hash_lookup(struct partition *p, hash_key key)
@@ -114,8 +125,16 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size, release_v
       }
     }
 
-    struct elem *l = TAILQ_LAST(&p->lru, lrulist);
-    if (l == NULL) return NULL;
+    struct elem *l = NULL;
+    if (p->do_lru) {
+      l = TAILQ_LAST(&p->lru, elist);
+      assert(l != NULL);
+    } else {
+      while (!l) {
+        int i = read_tsc() % p->nhash;
+        l = TAILQ_FIRST(&p->table[i].chain);
+      }
+    }
     hash_remove(p, l);
     release(l);
   }
@@ -123,7 +142,8 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size, release_v
   e->key = key;
   e->size = elem_size;
   TAILQ_INSERT_TAIL(eh, e, chain);
-  TAILQ_INSERT_HEAD(&p->lru, e, lru);
+  if (p->do_lru)
+    TAILQ_INSERT_HEAD(&p->lru, e, lru);
   return e;
 }
 

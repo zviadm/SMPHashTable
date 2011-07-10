@@ -2,10 +2,11 @@
 #define __UTIL_H_
 
 #include <sys/types.h>
+#include <stdint.h>
 
 #define CACHELINE   64 
-#define MAX_CLIENTS 128
-#define MAX_SERVERS 128
+#define MAX_CLIENTS 1024
+#define MAX_SERVERS 1024
 
 pid_t gettid(void);
 void set_affinity(int cpu_id);
@@ -29,6 +30,14 @@ static inline int min(int a, int b)
 static inline void _mm_pause() 
 {
   __asm __volatile("pause");
+}
+
+static inline uint64_t __attribute__((always_inline))
+read_tsc(void)
+{
+  uint32_t a, d;
+  __asm __volatile("rdtsc" : "=a" (a), "=d" (d));
+  return ((uint64_t) a) | (((uint64_t) d) << 32);
 }
 
 #endif

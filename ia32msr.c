@@ -24,6 +24,7 @@ ReadMSR(int cpu, uint32_t reg, uint64_t* value)
   }
   
   if (pread(fd, value, sizeof(*value), reg) != sizeof(*value)) {
+    close(fd);
     return -1;
   }
 
@@ -45,6 +46,7 @@ WriteMSR(int cpu, uint32_t reg, uint64_t value)
   }
   
   if (pwrite(fd, &value, sizeof(value), reg) != sizeof(value)) {
+    close(fd);
     return -1;
   }
 

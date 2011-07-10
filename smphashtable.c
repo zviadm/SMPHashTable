@@ -65,7 +65,6 @@ struct hash_table {
   int nservers;
   volatile int nclients;
   size_t max_size;
-  size_t overhead;
 
   pthread_mutex_t create_client_lock;
 
@@ -92,7 +91,7 @@ static inline int hash_get_server(const struct hash_table *hash_table, hash_key 
   return key % hash_table->nservers;
 }
 
-struct hash_table *create_hash_table(size_t max_size, int nservers) 
+struct hash_table *create_hash_table(size_t max_size, int nservers, int do_lru) 
 {
   struct hash_table *hash_table = (struct hash_table *)malloc(sizeof(struct hash_table));
   hash_table->nservers = nservers;
@@ -100,16 +99,11 @@ struct hash_table *create_hash_table(size_t max_size, int nservers)
   hash_table->max_size = max_size;
   pthread_mutex_init(&hash_table->create_client_lock, NULL);
 
-  hash_table->overhead = 
-    sizeof(struct hash_table) + nservers * sizeof(struct partition) + 
-    MAX_CLIENTS * sizeof(struct box_array) + nservers * sizeof(pthread_t) +
-    nservers * sizeof(struct thread_args);
-  
   hash_table->partitions = memalign(CACHELINE, nservers * sizeof(struct partition));
   hash_table->pending_data = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct pending_data *));
   hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
   for (int i = 0; i < hash_table->nservers; i++) {
-    init_hash_partition(&hash_table->partitions[i], max_size / nservers, nservers);
+    init_hash_partition(&hash_table->partitions[i], max_size / nservers, nservers, do_lru);
   }
 
   hash_table->threads = (pthread_t *)malloc(nservers * sizeof(pthread_t));
@@ -178,7 +172,6 @@ int create_hash_table_client(struct hash_table *hash_table)
   int client = hash_table->nclients;
   assert(hash_table->nclients <= MAX_CLIENTS);
   
-  hash_table->overhead += hash_table->nservers * sizeof(struct box);
   hash_table->boxes[client].boxes = memalign(CACHELINE, hash_table->nservers * sizeof(struct box));
   assert((unsigned long) &hash_table->boxes[client] % CACHELINE == 0);
   for (int i = 0; i < hash_table->nservers; i++) {
@@ -438,7 +431,16 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
   int s = hash_get_server(hash_table, key);
   void *value = NULL;
   int extra;
-  anderson_acquire(&hash_table->partitions[s].lock, &extra);
+  struct alock *l;
+  struct partition *p = &hash_table->partitions[s];
+
+  if (1 /* p->do_lru */) {
+    l = &p->lock;
+  } else {
+    l = &p->bucketlocks[hash_get_bucket(p, key)];
+  }
+
+  anderson_acquire(l, &extra);
   hash_table->partitions[s].nlookups++;
   struct elem *e = hash_lookup(&hash_table->partitions[s], key);
   if (e != NULL && is_value_ready(e)) {
@@ -446,7 +448,7 @@ void * locking_hash_lookup(struct hash_table *hash_table, hash_key key)
     __sync_add_and_fetch(&(e->ref_count), 1);
     value = e->value;
   }
-  anderson_release(&hash_table->partitions[s].lock, &extra);
+  anderson_release(l, &extra);
   return value;
 }
 
@@ -455,14 +457,23 @@ void * locking_hash_insert(struct hash_table *hash_table, hash_key key, int size
   int s = hash_get_server(hash_table, key);
   void *value = NULL;
   int extra;
-  anderson_acquire(&hash_table->partitions[s].lock, &extra);
+  struct alock *l;
+  struct partition *p = &hash_table->partitions[s];
+
+  if (1 /* p->do_lru */) {
+    l = &p->lock;
+  } else {
+    l = &p->bucketlocks[hash_get_bucket(p, key)];
+  }
+
+  anderson_acquire(l, &extra);
   hash_table->partitions[s].ninserts++;
   struct elem *e = hash_insert(&hash_table->partitions[s], key, size, atomic_release_value_);
   if (e != NULL) {
     e->ref_count = DATA_READY_MASK | 1;
     value = e->value;
   }
-  anderson_release(&hash_table->partitions[s].lock, &extra);
+  anderson_release(l, &extra);
   return value;
 }
 
@@ -570,22 +581,19 @@ int stats_get_ninserts(struct hash_table *hash_table)
   return ninserts;
 }
 
-size_t stats_get_overhead(struct hash_table *hash_table)
-{
-  return hash_table->overhead;
-}
-
 void stats_get_buckets(struct hash_table *hash_table, int server, double *avg, double *stddev)
 {
   struct partition *p = &hash_table->partitions[server];
 
   int nelems = 0;
   struct elem *e;
- 
-  e = TAILQ_FIRST(&p->lru);
-  while (e != NULL) {
-    nelems++;
-    e = TAILQ_NEXT(e, lru);
+
+  for (int i = 0; i < p->nhash; i++) {
+    e = TAILQ_FIRST(&p->table[i].chain);
+    while (e != NULL) {
+      nelems++;
+      e = TAILQ_NEXT(e, chain);
+    }
   }
   *avg = (double)nelems / p->nhash;
   *stddev = 0;
@@ -604,7 +612,7 @@ void stats_get_buckets(struct hash_table *hash_table, int server, double *avg, d
   *stddev = sqrt(*stddev / (nelems - 1));
 }
 
-void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total, double *util)
+void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total)
 {
   struct partition *p;
   size_t m = 0, u = 0;
@@ -618,5 +626,4 @@ void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total, d
 
   *total = m;
   *used = u;
-  *util = 0.0;
 }
