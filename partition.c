@@ -18,6 +18,7 @@ void init_hash_partition(struct partition *p, size_t max_size, int nservers)
   assert((unsigned long)p % CACHELINE == 0);
   p->nservers = nservers;
   p->max_size = max_size;
+  p->size = 0;
 
   // below is a trick to make GCD of p->nhash and nservers equal to 1
   // it can be proved that if GCD of nhash and nservers is 1 then, hash_get_server and
@@ -43,12 +44,15 @@ void destroy_hash_partition(struct partition *p, release_value_f *release)
   struct lrulist *eh = &p->lru;
   struct elem *e = TAILQ_FIRST(eh);
   struct elem *next;
+  size_t dbg_p_size = 0;
   while (e != NULL) {
     next = TAILQ_NEXT(e, lru);
+    dbg_p_size += e->size;
     release(e);
     e = next;
   }
 
+  assert(p->size == dbg_p_size);
   free(p->table);
 }
 
@@ -63,6 +67,8 @@ static inline int hash_get_bucket(const struct partition *p, hash_key key)
 void hash_remove(struct partition *p, struct elem *e)
 {
   struct elist *eh = &(p->table[hash_get_bucket(p, e->key)].chain);
+  p->size -= e->size;
+  assert(p->size > 0);
   TAILQ_REMOVE(eh, e, chain);
   TAILQ_REMOVE(&p->lru, e, lru);
 }
@@ -98,12 +104,16 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size, release_v
     release(e);
   } 
 
-  // try to allocate space for new value
-  while ((e = memalign(sizeof(struct elem) + size, CACHELINE)) == NULL) {
-    // TODO: we might want to do something more smart here
-    // i.e. remove only large enough elements or do not do check every time
-    // or even keep separate lrus for different size elements
-    // also if it is taking too long to allocate just discard it
+  size_t elem_size = (((sizeof(struct elem) + size) + (CACHELINE - 1)) & ~(CACHELINE - 1));
+  p->size += elem_size;
+  while (1) {
+    if (p->size <= p->max_size) {
+      // try to allocate space for new value
+      if ((e = (struct elem *)memalign(sizeof(struct elem) + size, CACHELINE)) != NULL) {
+        break;
+      }
+    }
+
     struct elem *l = TAILQ_LAST(&p->lru, lrulist);
     if (l == NULL) return NULL;
     hash_remove(p, l);
@@ -111,6 +121,7 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size, release_v
   }
 
   e->key = key;
+  e->size = elem_size;
   TAILQ_INSERT_TAIL(eh, e, chain);
   TAILQ_INSERT_HEAD(&p->lru, e, lru);
   return e;

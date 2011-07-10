@@ -12,9 +12,11 @@
  * struct partition  - hash table partition for server
  */
 struct elem {
-  // size must be 48 bytes
+  // size must be 64 bytes
   hash_key key;
   uint64_t ref_count;
+  size_t size;
+  uint64_t padding;
   TAILQ_ENTRY(elem) chain;
   TAILQ_ENTRY(elem) lru;
   
@@ -30,6 +32,7 @@ struct partition {
   int nservers;
   int nhash;
   size_t max_size;
+  size_t size;
   struct bucket *table;
   TAILQ_HEAD(lrulist, elem) lru;
 

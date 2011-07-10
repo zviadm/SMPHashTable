@@ -1,6 +1,6 @@
 DFLAGS = -DAMD64
-CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 $(DFLAGS)
-LFLAGS = -lpthread -lm -lrt
+CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 -fno-omit-frame-pointer $(DFLAGS)
+LFLAGS = -lpthread -lm -lrt -ltcmalloc
 MAKEDEPEND = gcc -M $(CFLAGS) -o $*.d $<
 
 LIBSRC = smphashtable.c onewaybuffer.c \
