@@ -14,7 +14,7 @@ SRCS = $(LIBSRC) \
 			 benchhashserver.c
 
 LIBOBJS = $(LIBSRC:.c=.o)
-BINS = testhashtable benchhashtable hashserver2 benchhashserver
+BINS = testhashtable benchhashtable hashserver2 # benchhashserver
 
 all: $(BINS)
 

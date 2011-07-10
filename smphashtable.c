@@ -91,7 +91,7 @@ static inline int hash_get_server(const struct hash_table *hash_table, hash_key 
   return key % hash_table->nservers;
 }
 
-struct hash_table *create_hash_table(size_t max_size, int nservers, int do_lru) 
+struct hash_table *create_hash_table(size_t max_size, int nservers, int evictalgo)
 {
   struct hash_table *hash_table = (struct hash_table *)malloc(sizeof(struct hash_table));
   hash_table->nservers = nservers;
@@ -103,7 +103,7 @@ struct hash_table *create_hash_table(size_t max_size, int nservers, int do_lru)
   hash_table->pending_data = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct pending_data *));
   hash_table->boxes = memalign(CACHELINE, MAX_CLIENTS * sizeof(struct box_array));
   for (int i = 0; i < hash_table->nservers; i++) {
-    init_hash_partition(&hash_table->partitions[i], max_size / nservers, nservers, do_lru);
+    init_hash_partition(&hash_table->partitions[i], max_size / nservers, nservers, evictalgo);
   }
 
   hash_table->threads = (pthread_t *)malloc(nservers * sizeof(pthread_t));
@@ -527,7 +527,7 @@ void atomic_release_value_(struct elem *e)
 void atomic_release_value(void *ptr)
 {
   struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
-  atomic_release_value(e);
+  atomic_release_value_(e);
 }
 
 void atomic_mark_ready(void *ptr)

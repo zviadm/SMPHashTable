@@ -1,6 +1,8 @@
 #ifndef __PARTITION_H_
 #define __PARTITION_H_
 
+#include <sys/queue.h>
+
 #include "alock.h"
 #include "hashprotocol.h"
 #include "util.h"
@@ -30,12 +32,18 @@ struct bucket {
   struct elist chain;
 };
 
+// supported eviction algorithms
+enum evictalgo {
+  EVICT_LRU    = 1,
+  EVICT_RANDOM = 2
+};
+
 struct partition {
-  int do_lru;	// flag to enable/disable LRU
   int nservers;
   int nhash;
   size_t max_size;
   size_t size;
+  enum evictalgo evictalgo;
   struct bucket *table;
   struct alock *bucketlocks;
   struct elist lru;
@@ -50,7 +58,7 @@ struct partition {
 
 typedef void release_value_f(struct elem *e);
 
-void init_hash_partition(struct partition *p, size_t max_size, int nservers, int do_lru);
+void init_hash_partition(struct partition *p, size_t max_size, int nservers, int evictalgo);
 void destroy_hash_partition(struct partition *p, release_value_f *release);
 
 struct elem * hash_lookup(struct partition *p, hash_key key);

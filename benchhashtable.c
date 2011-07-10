@@ -9,6 +9,7 @@
 //#include <google/profiler.h>
 
 #include "ia32perf.h"
+#include "partition.h"
 #include "smphashtable.h"
 #include "util.h"
 
@@ -39,7 +40,7 @@ size_t size         = 6400000;
 int query_mask      = (1 << 20) - 1;
 int query_shift     = (31 - 20);
 int write_threshold = (0.3f * (double)RAND_MAX);
-int do_lru          = 1;
+int evictalgo       = EVICT_LRU;
 
 struct hash_table *hash_table;
 long rand_data[10000] = { 0 };
@@ -63,7 +64,7 @@ int main(int argc, char *argv[])
 {
   int opt_char;
 
-  while((opt_char = getopt(argc, argv, "s:c:f:i:n:t:m:w:d:f:b:l:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:c:f:i:n:t:m:w:d:f:b:e:")) != -1) {
     switch (opt_char) {
       case 's':
         nservers = atoi(optarg);
@@ -94,9 +95,9 @@ int main(int argc, char *argv[])
       case 'b':
         batch_size = atoi(optarg);
         break;
-      case 'l':
-	do_lru = atoi(optarg);
-	break;
+      case 'e':
+        evictalgo = atoi(optarg);
+  break;
       default:
         printf("benchmark options are: \n"
                "   -d design (1 = server/client, 2 = old-style server/client, 3 = locking)\n"
@@ -107,7 +108,7 @@ int main(int argc, char *argv[])
                "   -t max size of cache (in bytes)\n"
                "   -m log of max hash key\n"
                "   -w hash insert ratio over total number of queries\n"
-	       "   -l (0|1)     enable (default, 1) or disable (0) LRU\n"
+               "   -e eviction algorithm (1 = LRU, 2 = random)\n"
                "example './benchmarkhashtable -d 2 -s 3 -c 3 -f 3 -b 1000 -i 100000000 -t 640000 -m 15 -w 0.3'\n");
         exit(-1);
     }
@@ -123,7 +124,9 @@ void run_benchmark()
 {
   srand(19890811);
 
-  printf(" Design:       %d (%s LRU)\n", design, do_lru ? "with" : "without");
+  printf(" Design:       %d (%s)\n", design,
+      (evictalgo == EVICT_LRU)    ? "LRU" :
+      (evictalgo == EVICT_RANDOM) ? "random" : "XXXXXX");
   printf(" # clients:    %d\n", nclients);
   if (design == 1 || design == 2)
     printf(" # servers:    %d\n", nservers);
@@ -134,7 +137,7 @@ void run_benchmark()
   printf(" Total memory: %ld bytes\n", size);
   printf(" Iterations:   %d\n", niters);
 
-  hash_table = create_hash_table(size, nservers, do_lru);
+  hash_table = create_hash_table(size, nservers, evictalgo);
   cdata = malloc(nclients * sizeof(struct client_data));
   for (int i = 0; i < nclients; i++) {
     cdata[i].seed = rand();
