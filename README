@@ -2,6 +2,11 @@ How to Build:
 
 Code can be built by just typing make. Makefile is pretty simple and self explanatory.
 
+To build code you will need google's TCMalloc. To get TCMalloc library download google-perftools developer
+version and install that. TCMalloc is linked dynamically so you will need to install google-perftools
+on machines were you want to run the code too, but on those machine you don't need the developer version. On
+ubuntu you can just get the non dev google-perftools from apt (apt-get install google-perftools).
+
 To build hash server benchmarks you will need libmemcached
 installed with static libraries enabled (run ./configure --enable-static). 
 Also libmemcached has a retarded bug for multi get in binary protocol, 
