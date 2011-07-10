@@ -8,7 +8,6 @@
 
 #include "alock.h"
 #include "hashprotocol.h"
-#include "localmem.h"
 #include "partition.h"
 #include "util.h"
 
@@ -36,7 +35,6 @@ void init_hash_partition(struct partition *p, size_t max_size, int nservers)
   }
 
   TAILQ_INIT(&p->lru);
-  localmem_init(&p->mem, p->max_size);
   anderson_init(&p->lock, nservers);
 }
 
@@ -50,7 +48,6 @@ void destroy_hash_partition(struct partition *p, release_value_f *release)
     release(e);
     e = next;
   }
-  localmem_destroy(&p->mem);
 
   free(p->table);
 }
@@ -102,7 +99,7 @@ struct elem * hash_insert(struct partition *p, hash_key key, int size, release_v
   } 
 
   // try to allocate space for new value
-  while ((e = localmem_alloc(&p->mem, sizeof(struct elem) + size)) == NULL) {
+  while ((e = memalign(sizeof(struct elem) + size, CACHELINE)) == NULL) {
     // TODO: we might want to do something more smart here
     // i.e. remove only large enough elements or do not do check every time
     // or even keep separate lrus for different size elements

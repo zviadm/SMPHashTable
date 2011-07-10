@@ -7,7 +7,6 @@
 #include <sys/queue.h>
 
 #include "hashprotocol.h"
-#include "localmem.h"
 #include "mpbuffers.h"
 #include "partition.h"
 #include "smphashtable.h"
@@ -479,7 +478,7 @@ void mp_release_value_(struct elem *e)
 {
   e->ref_count = (e->ref_count & (~DATA_READY_MASK)) - 1;
   if (e->ref_count == 0) {
-    localmem_free(e);
+    free(e);
   }
 }
 
@@ -510,7 +509,7 @@ void atomic_release_value_(struct elem *e)
 {
   uint64_t ref_count = __sync_sub_and_fetch(&(e->ref_count), 1);
   if (ref_count == 0) {
-    localmem_free(e);
+    free(e);
   }
 }
 
@@ -519,7 +518,7 @@ void atomic_release_value(void *ptr)
   struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
   uint64_t ref_count = __sync_sub_and_fetch(&(e->ref_count), 1);
   if (ref_count == 0) {
-    localmem_async_free(e);
+    free(e);
   }
 }
 
@@ -528,7 +527,7 @@ void atomic_mark_ready(void *ptr)
   struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
   uint64_t ref_count = __sync_and_and_fetch(&(e->ref_count), (~DATA_READY_MASK));
   if (ref_count == 0) {
-    localmem_async_free(e);
+    free(e);
   }
 }
 
@@ -614,7 +613,7 @@ void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total, d
     p = &hash_table->partitions[i];
   
     m += p->max_size;
-    u += localmem_used(&p->mem);
+    //u += localmem_used(&p->mem);
   }
 
   *total = m;

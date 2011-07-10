@@ -38,7 +38,6 @@ struct partition {
   int nlookups;
   int ninserts;
 
-  struct localmem mem; // local memory
   struct alock lock;   // partition lock for locking implementation
 } __attribute__ ((aligned (CACHELINE)));
 
