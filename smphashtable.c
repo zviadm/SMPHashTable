@@ -527,10 +527,7 @@ void atomic_release_value_(struct elem *e)
 void atomic_release_value(void *ptr)
 {
   struct elem *e = (struct elem *)(ptr - sizeof(struct elem));
-  uint64_t ref_count = __sync_sub_and_fetch(&(e->ref_count), 1);
-  if (ref_count == 0) {
-    free(e);
-  }
+  atomic_release_value(e);
 }
 
 void atomic_mark_ready(void *ptr)
@@ -621,7 +618,7 @@ void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total)
     p = &hash_table->partitions[i];
   
     m += p->max_size;
-    //u += localmem_used(&p->mem);
+    u += p->size;
   }
 
   *total = m;

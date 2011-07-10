@@ -4,7 +4,7 @@ LFLAGS = -lpthread -lm -lrt -ltcmalloc
 MAKEDEPEND = gcc -M $(CFLAGS) -o $*.d $<
 
 LIBSRC = smphashtable.c onewaybuffer.c \
-				 partition.c localmem.c mpbuffers.c \
+				 partition.c mpbuffers.c \
 				 util.c alock.c ia32msr.c ia32perf.c
 SRCS = $(LIBSRC) \
 			 testhashtable.c \
@@ -23,8 +23,8 @@ hashserver2 testhashtable benchhashtable: %: %.o $(LIBOBJS)
 
 #benchhashtable: LFLAGS += -lprofiler
 
-benchhashserver: %: %.o util.o hashclient.o
-	gcc -o $@ $^ -lmemcached $(LFLAGS)
+#benchhashserver: %: %.o util.o hashclient.o
+#	g++ -o $@ $^ /usr/local/lib/libmemcached.a $(LFLAGS)
 
 %.P : %.c
 				-$(MAKEDEPEND)
