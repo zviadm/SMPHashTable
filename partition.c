@@ -77,7 +77,7 @@ void hash_remove(struct partition *p, struct elem *e)
 {
   struct elist *eh = &(p->table[hash_get_bucket(p, e->key)].chain);
   p->size -= e->size;
-  assert(p->size > 0);
+  assert(p->size >= 0);
   TAILQ_REMOVE(eh, e, chain);
   if (p->evictalgo == EVICT_LRU) {
     TAILQ_REMOVE(&p->lru, e, lru);
