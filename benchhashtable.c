@@ -43,9 +43,9 @@ int query_mask      = (1 << 20) - 1;
 int query_shift     = (31 - 20);
 int write_threshold = (0.3f * (double)RAND_MAX);
 int evictalgo       = EVICT_LRU;
+int track_cpu_usage = 0;
 
 struct hash_table *hash_table;
-long rand_data[10000] = { 0 };
 int iters_per_client; 
 
 uint64_t pmccount[NEVT][MAX_SERVERS + MAX_CLIENTS];
@@ -66,7 +66,7 @@ int main(int argc, char *argv[])
 {
   int opt_char;
 
-  while((opt_char = getopt(argc, argv, "s:c:f:i:n:t:m:w:d:f:b:e:")) != -1) {
+  while((opt_char = getopt(argc, argv, "s:c:f:i:n:t:m:w:d:f:b:e:u")) != -1) {
     switch (opt_char) {
       case 's':
         nservers = atoi(optarg);
@@ -99,7 +99,10 @@ int main(int argc, char *argv[])
         break;
       case 'e':
         evictalgo = atoi(optarg);
-  break;
+        break;
+      case 'u':
+        track_cpu_usage = 1;
+        break;
       default:
         printf("benchmark options are: \n"
                "   -d design (1 = server/client, 2 = old-style server/client, 3 = locking)\n"
@@ -111,6 +114,7 @@ int main(int argc, char *argv[])
                "   -m log of max hash key\n"
                "   -w hash insert ratio over total number of queries\n"
                "   -e eviction algorithm (1 = LRU, 2 = random)\n"
+               "   -u show server cpu usage\n"
                "example './benchmarkhashtable -d 2 -s 3 -c 3 -f 3 -b 1000 -i 100000000 -t 640000 -m 15 -w 0.3'\n");
         exit(-1);
     }
@@ -140,24 +144,16 @@ void run_benchmark()
   printf(" Iterations:   %d\n", niters);
 
   hash_table = create_hash_table(size, nservers, evictalgo);
+  stats_set_track_cpu_usage(hash_table, track_cpu_usage);
   cdata = malloc(nclients * sizeof(struct client_data));
   for (int i = 0; i < nclients; i++) {
     cdata[i].seed = rand();
   }
  
-  for (int i = 0; i < 10000; i++) {
-    rand_data[i] = i;
-  }
-
-  // start the clients
-  //ProfilerStart("cpu.info"); 
-  double tstart = now();
-
   for (int i = 0; i < nclients; i++) {
     for (int k = 0; k < NEVT; k++) {
       if (StartCounter(i, k, 
-            (k == 1) ? (evts[k] | ((i % 6) << 12)) : 
-            evts[k]) != 0) {
+            (k == 1) ? (evts[k] | ((i % 6) << 12)) : evts[k]) != 0) {
         printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
             " and are running benchmark with sudo privileges\n", i);
       }
@@ -169,8 +165,7 @@ void run_benchmark()
     for (int i = first_core; i < first_core + nservers; i++) {
       for (int k = 0; k < NEVT; k++) {
         if (StartCounter(i, k, 
-              (k == 1) ? (evts[k] | ((i % 6) << 12)) : 
-              evts[k]) != 0) {
+              (k == 1) ? (evts[k] | ((i % 6) << 12)) : evts[k]) != 0) {
           printf("Failed to start counter on cpu %d, make sure you have run \"modprobe msr\"" 
               " and are running benchmark with sudo privileges\n", i);
         }
@@ -178,6 +173,10 @@ void run_benchmark()
       }
     }
   }
+
+  // start the clients
+  //ProfilerStart("cpu.info");
+  double tstart = now();
 
   if (design == 1 || design == 2) {
     start_hash_table_servers(hash_table, first_core);

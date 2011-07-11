@@ -75,6 +75,9 @@ struct hash_table {
   struct partition *partitions;
   struct pending_data **pending_data;
   struct box_array *boxes;
+
+  // stats
+  int track_cpu_usage;
 };
 
 // Forward declarations
@@ -204,11 +207,11 @@ void * hash_table_server(void* args)
 
   set_affinity(c);
 
-  const int TIME_CPU = 1;
+  const int TRACK_CPU_USAGE = hash_table->track_cpu_usage;
   uint64_t idleclock = 0;
   uint64_t busyclock = 0;
-  uint64_t tmpt0, tmpt1;
-  if (TIME_CPU) tmpt0 = read_tsc();
+  uint64_t tmpt0 = 0, tmpt1 = 0;
+  if (TRACK_CPU_USAGE) tmpt0 = read_tsc();
 
   while (quitting == 0) {
     // after server receives quit signal it should make sure to complete all 
@@ -222,12 +225,12 @@ void * hash_table_server(void* args)
     }
 #endif
     for (int i = 0; i < nclients; i++) {
-      if (TIME_CPU) tmpt1 = read_tsc();
+      if (TRACK_CPU_USAGE) tmpt1 = read_tsc();
       
       int count = inpb_read(&boxes[i].boxes[s].in, localbuf);
       if (count == 0) continue;
 
-      if (TIME_CPU) idleclock += (tmpt1 - tmpt0);
+      if (TRACK_CPU_USAGE) idleclock += (tmpt1 - tmpt0);
 
       int k = 0;
       int j = 0;
@@ -281,7 +284,7 @@ void * hash_table_server(void* args)
 
       outb_write(&boxes[i].boxes[s].out, j, localbuf);
 
-      if (TIME_CPU) {
+      if (TRACK_CPU_USAGE) {
         tmpt0 = read_tsc();
         busyclock += (tmpt0 - tmpt1);
       }
@@ -298,7 +301,7 @@ void * hash_table_server(void* args)
   printf("%2d blocked on flush: %10lu blocked on read %10lu\n", s, tmp0, tmp1);
 #endif
 
-  if (TIME_CPU) {
+  if (TRACK_CPU_USAGE) {
     p->busyclock = busyclock;
     p->idleclock = idleclock;
     //printf("%2d - busy/idle: %ld/%ld = %.3f\n", s, busyclock, idleclock, (double)busyclock / (double)(busyclock + idleclock));
@@ -644,6 +647,11 @@ void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total)
 
   *total = m;
   *used = u;
+}
+
+void stats_set_track_cpu_usage(struct hash_table *hash_table, int track_cpu_usage)
+{
+  hash_table->track_cpu_usage = track_cpu_usage;
 }
 
 double stats_get_cpu_usage(struct hash_table *hash_table)
