@@ -4,13 +4,18 @@
 #include <stdint.h>
 #include "util.h"
 
-#define INPB_SIZE (CACHELINE >> 3)        // INPB_SIZE * sizeof(uint64_t) == CACHELINE
-#define OUTB_SIZE ((CACHELINE >> 3) << 3) // Must Be Power of 2
+// NOTE: all this constants must be powers of 2
+#define INPB_SIZE  (CACHELINE >> 3)        // INPB_SIZE * sizeof(uint64_t) == CACHELINE
+#define INPB_COUNT 4                       // adjusts size of input buffer
+#define OUTB_SIZE  ((CACHELINE >> 3) << 3) // adjusts size of output buffer
 
 struct inputbuffer {
-  volatile uint64_t data[INPB_SIZE];
+  volatile uint64_t data[INPB_COUNT][INPB_SIZE];
+  unsigned long data_rd;
+  char padding0[CACHELINE - sizeof(unsigned long)];
   uint64_t local_data[INPB_SIZE];
-  uint64_t local_index;
+  unsigned long local_index;
+  unsigned long data_wr;
   volatile unsigned long local_waitcnt;
 } __attribute__ ((aligned (CACHELINE)));
 

@@ -21,36 +21,40 @@ void inpb_flush(struct inputbuffer *buffer)
 {
   if (buffer->local_index == 0) return;
 
-  while (buffer->data[0] != 0) {
+  while (buffer->data[buffer->data_wr][0] != 0) {
     buffer->local_waitcnt++;
     _mm_pause();
   }
 
   for (int i = 1; i < buffer->local_index; i++) {
-    buffer->data[i] = buffer->local_data[i];
+    buffer->data[buffer->data_wr][i] = buffer->local_data[i];    
   }
   if (buffer->local_index < INPB_SIZE) {
-    buffer->data[buffer->local_index] = 0;
+    buffer->data[buffer->data_wr][buffer->local_index] = 0;
   }
 
    __sync_synchronize(); 
-  buffer->data[0] = buffer->local_data[0];
+  buffer->data[buffer->data_wr][0] = buffer->local_data[0];
+  buffer->data_wr = (buffer->data_wr + 1) & (INPB_COUNT - 1);
   buffer->local_index = 0;
 }
 
 void inpb_prefetch(struct inputbuffer *buffer)
 {
-  __builtin_prefetch((const void *)buffer->data, 1, 3);
+  //__builtin_prefetch((const void *)buffer->data, 1, 3);
 }
 
 int inpb_read(struct inputbuffer *buffer, uint64_t *data)
 {
   int count = 0;
-  while ((count < INPB_SIZE) && (buffer->data[count] != 0)) {
-    data[count] = buffer->data[count];
+  while ((count < INPB_SIZE) && (buffer->data[buffer->data_rd][count] != 0)) {
+    data[count] = buffer->data[buffer->data_rd][count];
     count++;
   }    
-  if (count != 0) buffer->data[0] = 0;
+  if (count != 0) {
+    buffer->data[buffer->data_rd][0] = 0;
+    buffer->data_rd = (buffer->data_rd + 1) & (INPB_COUNT - 1);
+  }
   return count;
 }
 

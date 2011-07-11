@@ -231,7 +231,7 @@ void run_benchmark()
   printf("== results ==\n");
   printf(" Total time:      %.3f\n", tend - tstart);
   printf(" Lookup hit rate: %.3f\n", (double)stats_get_nhits(hash_table) / stats_get_nlookups(hash_table));
-  printf(" Servr CPU usage:  %.3f\n", stats_get_cpu_usage(hash_table));
+  printf(" Servr CPU usage: %.3f\n", stats_get_cpu_usage(hash_table));
   if (NEVT > 0) {
     printf(" L2 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
         clients_totalpmc[0] / niters, servers_totalpmc[0] / niters, (clients_totalpmc[0] + servers_totalpmc[0]) / niters);
