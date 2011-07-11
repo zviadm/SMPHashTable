@@ -53,6 +53,9 @@ struct partition {
   int nlookups;
   int ninserts;
 
+  uint64_t busyclock;
+  uint64_t idleclock;
+
   struct alock lock;   // partition lock for locking implementation
 } __attribute__ ((aligned (CACHELINE)));
 

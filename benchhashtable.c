@@ -13,14 +13,14 @@
 #include "smphashtable.h"
 #include "util.h"
 
-#ifndef AMD64
+#if defined(INTEL64)
   // Event Select values for Intel I7 core processor
   // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits)
   #define NEVT 1
   uint64_t evts[NEVT] = {
     0x00410224, // L2 Misses
   };
-#else
+#elif defined(AMD64)
   // Reserved (22 bits) - HO - GO - Reserved (4 bits) - Event Select (8 bits)
   // Counter Mask (8 bits) - INV - EN - ANY - INT - PC - E - OS - USR - UMASK (8 bits) - Event Select (8 bits)
   #define NEVT 2
@@ -28,6 +28,8 @@
     0x000041077E, // L2 Misses
     0x04004107E1, // L3 Misses, needs to be ORed with (core# << (12))
   };
+#else
+  #define NEVT 0
 #endif
 
 int design          = 1;
@@ -229,6 +231,7 @@ void run_benchmark()
   printf("== results ==\n");
   printf(" Total time:      %.3f\n", tend - tstart);
   printf(" Lookup hit rate: %.3f\n", (double)stats_get_nhits(hash_table) / stats_get_nlookups(hash_table));
+  printf(" Servr CPU usage:  %.3f\n", stats_get_cpu_usage(hash_table));
   if (NEVT > 0) {
     printf(" L2 Misses per iteration: clients - %.3f, servers - %.3f, total - %.3f\n", 
         clients_totalpmc[0] / niters, servers_totalpmc[0] / niters, (clients_totalpmc[0] + servers_totalpmc[0]) / niters);
@@ -242,7 +245,7 @@ void run_benchmark()
   double avg, stddev;
   for (int i = 0; i < nservers; i++) {
     stats_get_buckets(hash_table, i, &avg, &stddev);
-    printf("Server %d Buckets, avg %.3f, stddev %.3f\n", i, avg, stddev);
+    printf(" Server %d Buckets, avg %.3f, stddev %.3f\n", i, avg, stddev);
   }
 #endif
 

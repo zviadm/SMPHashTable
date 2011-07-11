@@ -142,5 +142,6 @@ int stats_get_nlookups(struct hash_table *hash_table);
 int stats_get_ninserts(struct hash_table *hash_table);
 void stats_get_buckets(struct hash_table *hash_table, int server, double *avg, double *stddev);
 void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total);
+double stats_get_cpu_usage(struct hash_table *hash_table);
 
 #endif

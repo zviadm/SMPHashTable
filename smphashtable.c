@@ -194,8 +194,8 @@ int create_hash_table_client(struct hash_table *hash_table)
 
 void * hash_table_server(void* args)
 {
-  int s = ((struct thread_args *) args)->id;
-  int c = ((struct thread_args *) args)->core;
+  const int s = ((struct thread_args *) args)->id;
+  const int c = ((struct thread_args *) args)->core;
   struct hash_table *hash_table = ((struct thread_args *) args)->hash_table;
   struct partition *p = &hash_table->partitions[s];
   struct box_array *boxes = hash_table->boxes;
@@ -203,6 +203,12 @@ void * hash_table_server(void* args)
   int quitting = 0;
 
   set_affinity(c);
+
+  const int TIME_CPU = 1;
+  uint64_t idleclock = 0;
+  uint64_t busyclock = 0;
+  uint64_t tmpt0, tmpt1;
+  if (TIME_CPU) tmpt0 = read_tsc();
 
   while (quitting == 0) {
     // after server receives quit signal it should make sure to complete all 
@@ -216,8 +222,12 @@ void * hash_table_server(void* args)
     }
 #endif
     for (int i = 0; i < nclients; i++) {
+      if (TIME_CPU) tmpt1 = read_tsc();
+      
       int count = inpb_read(&boxes[i].boxes[s].in, localbuf);
       if (count == 0) continue;
+
+      if (TIME_CPU) idleclock += (tmpt1 - tmpt0);
 
       int k = 0;
       int j = 0;
@@ -270,6 +280,11 @@ void * hash_table_server(void* args)
       }
 
       outb_write(&boxes[i].boxes[s].out, j, localbuf);
+
+      if (TIME_CPU) {
+        tmpt0 = read_tsc();
+        busyclock += (tmpt0 - tmpt1);
+      }
     }
   }
 
@@ -280,8 +295,14 @@ void * hash_table_server(void* args)
     tmp0 += boxes[i].boxes[s].in.local_waitcnt;
     tmp1 += boxes[i].boxes[s].out.local_waitcnt;
   }
-  printf("%2d %10lu %10lu\n", s, tmp0, tmp1);
+  printf("%2d blocked on flush: %10lu blocked on read %10lu\n", s, tmp0, tmp1);
 #endif
+
+  if (TIME_CPU) {
+    p->busyclock = busyclock;
+    p->idleclock = idleclock;
+    //printf("%2d - busy/idle: %ld/%ld = %.3f\n", s, busyclock, idleclock, (double)busyclock / (double)(busyclock + idleclock));
+  }
   return NULL;
 }
 
@@ -623,4 +644,19 @@ void stats_get_mem(struct hash_table *hash_table, size_t *used, size_t *total)
 
   *total = m;
   *used = u;
+}
+
+double stats_get_cpu_usage(struct hash_table *hash_table)
+{
+  struct partition *p;
+  uint64_t busy = 0;
+  uint64_t idle = 0;
+
+  for (int i = 0; i < hash_table->nservers; i++) {
+    p = &hash_table->partitions[i];
+    busy += p->busyclock;
+    idle += p->idleclock;
+  }
+
+  return (double)busy / (double)(busy + idle);
 }

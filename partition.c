@@ -29,6 +29,8 @@ void init_hash_partition(struct partition *p, size_t max_size, int nservers, int
   p->nhits = 0;
   p->nlookups = 0;
   p->ninserts = 0;
+  p->busyclock = 0;
+  p->idleclock = 0;
 
   p->table = memalign(CACHELINE, p->nhash * sizeof(struct bucket));
   assert((unsigned long) &(p->table[0]) % CACHELINE == 0);

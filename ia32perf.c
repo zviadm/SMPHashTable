@@ -6,17 +6,19 @@
 #include "ia32msr.h"
 #include "ia32perf.h"
 
-#ifndef AMD64
-  // Intel Core I7 (default)
+#if defined(INTEL64)
+  // Intel Core I7
   #define NPMC        3     // number of available counter MSRs,
                             // we can get this number using CPUID too but it is too much work just set manually
   #define PMC0        0xC1  // start address of coutner MSR
   #define PERFEVTSEL0 0x186 // start address of event select MSR
-#else
+#elif defined(AMD64)
   // AMD64 Opteron and Such
   #define NPMC        4
   #define PMC0        0xC0010004
   #define PERFEVTSEL0 0xC0010000
+#else
+  #define NPMC        0
 #endif
 
 int

@@ -1,5 +1,6 @@
-DFLAGS = -DAMD64
-CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 -fno-omit-frame-pointer $(DFLAGS)
+ARCH   = AMD64
+DFLAGS = 
+CFLAGS = -std=c99 -Wall -D_GNU_SOURCE -fms-extensions -g -O2 -fno-omit-frame-pointer -D$(ARCH) $(DFLAGS)
 LFLAGS = -lpthread -lm -lrt -ltcmalloc
 MAKEDEPEND = gcc -M $(CFLAGS) -o $*.d $<
 
